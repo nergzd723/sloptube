@@ -1,0 +1,23 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/nergzd/SlopTube">
+    <file>style.css</file>
+    <file>icons/scalable/apps/io.github.nergzd.SlopTube.svg</file>
+    <file>icons/scalable/apps/io.github.nergzd.SlopTube-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-home-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-explore-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-subscriptions-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-library-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-thumbs-up-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-thumbs-down-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-verified-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-watch-later-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-news-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-music-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-live-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-gaming-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-sports-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-learning-symbolic.svg</file>
+    <file>icons/scalable/actions/sloptube-fashion-symbolic.svg</file>
+  </gresource>
+</gresources>

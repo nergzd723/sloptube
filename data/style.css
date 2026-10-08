@@ -1,0 +1,461 @@
+/* SlopTube — mobile-YouTube-inspired styling on top of libadwaita */
+
+@define-color yt_red #ff0033;
+
+/* ---------- Header ---------- */
+.app-logo {
+  margin-left: 6px;
+}
+.logo-text {
+  font-weight: 800;
+  font-size: 1.18em;
+  letter-spacing: -0.04em;
+}
+.search-pill {
+  border-radius: 999px;
+  padding: 4px 16px;
+  min-height: 30px;
+  background: alpha(currentColor, 0.08);
+  font-weight: normal;
+}
+.search-pill:hover {
+  background: alpha(currentColor, 0.12);
+}
+.account-button {
+  padding: 2px;
+}
+.account-header {
+  padding: 8px 10px;
+}
+
+/* ---------- Feeds ---------- */
+gridview.feed-grid {
+  padding: 8px 12px 24px 12px;
+  background: none;
+}
+gridview.feed-grid > child {
+  padding: 8px 8px 20px 8px;
+  border-radius: 14px;
+  background: none;
+}
+gridview.feed-grid > child:hover {
+  background: alpha(currentColor, 0.04);
+}
+gridview.feed-grid > child:focus-visible {
+  outline: 2px solid alpha(@accent_color, 0.6);
+  outline-offset: -2px;
+}
+listview.feed-list {
+  background: none;
+  padding: 4px 0 24px 0;
+}
+listview.feed-list > row {
+  padding: 6px 12px;
+  border-radius: 10px;
+  margin: 0 6px;
+}
+
+.thumb-frame {
+  border-radius: 12px;
+  background: alpha(currentColor, 0.08);
+}
+.compact .thumb-frame {
+  border-radius: 8px;
+}
+.card-title {
+  font-weight: 600;
+}
+.card-subtitle {
+  font-size: 0.88em;
+}
+.card-info {
+  padding: 0 2px;
+}
+.card-menu {
+  min-width: 28px;
+  min-height: 28px;
+  padding: 0;
+  margin-top: -4px;
+}
+.channel-card .thumb-frame {
+  background: none;
+}
+
+.duration-badge,
+.live-badge {
+  margin: 6px;
+  padding: 1px 5px;
+  border-radius: 5px;
+  font-size: 0.78em;
+  font-weight: 700;
+  color: white;
+  background: rgba(0, 0, 0, 0.78);
+}
+.live-badge {
+  background: #cc0000;
+}
+progressbar.watched-bar > trough {
+  min-height: 4px;
+  border-radius: 0;
+  background: rgba(255, 255, 255, 0.45);
+}
+progressbar.watched-bar > trough > progress {
+  min-height: 4px;
+  border-radius: 0;
+  background: @yt_red;
+}
+
+/* Phones: edge-to-edge thumbnails like the YouTube app */
+window.phone gridview.feed-grid {
+  padding: 0 0 24px 0;
+}
+window.phone gridview.feed-grid > child {
+  padding: 0 0 18px 0;
+  border-radius: 0;
+}
+window.phone gridview.feed-grid > child:hover {
+  background: none;
+}
+window.phone gridview.feed-grid .thumb-frame {
+  border-radius: 0;
+}
+window.phone gridview.feed-grid .card-info {
+  padding: 0 12px;
+}
+
+/* ---------- Chips ---------- */
+.chips {
+  padding: 8px 12px;
+}
+.chip {
+  border-radius: 8px;
+  padding: 4px 12px;
+  min-height: 24px;
+  font-weight: 600;
+  background: alpha(currentColor, 0.08);
+  box-shadow: none;
+}
+.chip:hover {
+  background: alpha(currentColor, 0.14);
+}
+.chip:checked {
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+
+/* ---------- Player ---------- */
+.player-view {
+  background: black;
+}
+.player-frame {
+  background: black;
+}
+.poster {
+  background: black;
+}
+.player-controls {
+  color: white;
+}
+.player-top {
+  padding: 4px 6px 20px 6px;
+  background: linear-gradient(to bottom, rgba(0, 0, 0, 0.62), rgba(0, 0, 0, 0));
+}
+.player-bottom {
+  padding: 18px 10px 0 12px;
+  background: linear-gradient(to top, rgba(0, 0, 0, 0.72), rgba(0, 0, 0, 0));
+}
+.osd-button {
+  color: white;
+  min-width: 40px;
+  min-height: 40px;
+  border-radius: 999px;
+}
+.osd-button:hover {
+  background: rgba(255, 255, 255, 0.14);
+}
+.play-button {
+  min-width: 68px;
+  min-height: 68px;
+  background: rgba(0, 0, 0, 0.45);
+}
+.play-button image {
+  -gtk-icon-size: 34px;
+}
+.player-time {
+  color: white;
+  font-size: 0.88em;
+  font-weight: 600;
+  margin-left: 4px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+.player-title {
+  color: white;
+  font-weight: 700;
+  font-size: 1.08em;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.6);
+}
+scale.seek-bar {
+  padding: 6px 0 8px 0;
+}
+scale.seek-bar > trough {
+  min-height: 4px;
+  background: rgba(255, 255, 255, 0.28);
+}
+scale.seek-bar > trough > highlight {
+  background: @yt_red;
+  min-height: 4px;
+}
+scale.seek-bar > trough > slider {
+  background: @yt_red;
+  min-width: 14px;
+  min-height: 14px;
+  margin: -5px;
+  border: none;
+  box-shadow: none;
+  outline: none;
+}
+.seek-feedback {
+  margin: 0 56px;
+  padding: 14px 22px;
+  border-radius: 999px;
+  color: white;
+  font-weight: 700;
+  background: rgba(0, 0, 0, 0.5);
+}
+.stats-overlay {
+  margin: 52px 10px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  font-size: 0.8em;
+  color: #eeeeee;
+  background: rgba(0, 0, 0, 0.72);
+}
+.player-error {
+  padding: 18px 22px;
+  border-radius: 14px;
+  color: white;
+  background: rgba(0, 0, 0, 0.7);
+}
+.player-spinner {
+  color: white;
+}
+.player-settings {
+  padding: 6px;
+  min-width: 260px;
+}
+
+/* ---------- Watch page ---------- */
+/* The page itself is transparent so the feed shows around the video while the
+   sheet is dragged; the panes carry the background instead. */
+.watch-view {
+  background: none;
+}
+.watch-view .details-pane,
+.watch-view .side-pane {
+  background: @window_bg_color;
+}
+.floating-video {
+  background: black;
+  border-radius: 8px;
+}
+.watch-details {
+  padding: 12px 14px 24px 14px;
+}
+.watch-title {
+  font-size: 1.22em;
+  font-weight: 700;
+}
+.channel-button {
+  padding: 2px 4px;
+}
+.verified {
+  color: alpha(currentColor, 0.6);
+}
+.subscribe-button {
+  padding: 4px 16px;
+  font-weight: 600;
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+.subscribe-button:hover {
+  background: alpha(@window_fg_color, 0.85);
+}
+.subscribe-button.subscribed {
+  background: alpha(currentColor, 0.1);
+  color: @window_fg_color;
+}
+.watch-actions {
+  padding-bottom: 2px;
+}
+.action-pill {
+  border-radius: 999px;
+  padding: 4px 14px;
+  background: alpha(currentColor, 0.09);
+  font-weight: 600;
+}
+.action-pill:hover {
+  background: alpha(currentColor, 0.15);
+}
+.like-group > .action-pill:first-child {
+  border-radius: 999px 0 0 999px;
+  border-right: 1px solid alpha(currentColor, 0.15);
+}
+.like-group > .action-pill:last-child {
+  border-radius: 0 999px 999px 0;
+}
+.action-pill:checked {
+  background: alpha(currentColor, 0.2);
+}
+.description-card,
+.comments-card,
+.queue-box {
+  padding: 12px;
+  border-radius: 14px;
+  background: alpha(currentColor, 0.06);
+}
+.description-card.collapsed:hover,
+.comments-card:hover {
+  background: alpha(currentColor, 0.1);
+}
+.comments-card {
+  font-weight: normal;
+}
+.related-header {
+  margin-top: 4px;
+}
+.side-column {
+  padding: 12px 14px 24px 2px;
+}
+.item-card.current {
+  border-radius: 10px;
+  background: alpha(@accent_bg_color, 0.16);
+}
+.item-card.compact {
+  padding: 2px;
+}
+
+/* ---------- Mini player ---------- */
+.mini-player {
+  background: @headerbar_bg_color;
+  box-shadow: 0 -1px alpha(currentColor, 0.08);
+}
+.mini-row {
+  padding: 6px 8px 6px 8px;
+}
+.mini-thumb {
+  border-radius: 6px;
+  background: black;
+}
+.mini-title {
+  font-weight: 600;
+}
+progressbar.mini-progress > trough {
+  min-height: 2px;
+  border-radius: 0;
+  background: none;
+}
+progressbar.mini-progress > trough > progress {
+  min-height: 2px;
+  border-radius: 0;
+  background: @yt_red;
+}
+
+/* ---------- Explore & shelves ---------- */
+.explore {
+  padding: 12px 12px 24px 12px;
+}
+.explore-tile {
+  padding: 14px 8px;
+  border-radius: 14px;
+  font-weight: 600;
+}
+.explore-tile.music:checked { background: alpha(#e91e63, 0.75); color: white; }
+.explore-tile.live:checked { background: alpha(#e53935, 0.8); color: white; }
+.explore-tile.gaming:checked { background: alpha(#7e57c2, 0.8); color: white; }
+.explore-tile.news:checked { background: alpha(#1e88e5, 0.8); color: white; }
+.explore-tile.sports:checked { background: alpha(#43a047, 0.8); color: white; }
+.explore-tile.learning:checked { background: alpha(#f4a100, 0.85); color: white; }
+.explore-tile.fashion:checked { background: alpha(#d81b60, 0.75); color: white; }
+.shelves {
+  margin-top: 8px;
+}
+.shelf-title {
+  margin: 0 4px;
+}
+.shelf-row {
+  padding: 2px 4px 14px 4px;
+}
+
+/* ---------- Channel / playlist ---------- */
+.channel-header,
+.playlist-header {
+  padding: 12px 16px;
+}
+.channel-banner {
+  border-radius: 14px;
+}
+.channel-tabs {
+  padding: 0 12px;
+  box-shadow: inset 0 -1px alpha(currentColor, 0.1);
+}
+.tab-button {
+  border-radius: 0;
+  padding: 8px 14px;
+  font-weight: 600;
+  background: none;
+}
+.tab-button:checked {
+  box-shadow: inset 0 -2px @window_fg_color;
+  background: none;
+}
+.owner-button {
+  padding: 2px 6px;
+  margin-left: -6px;
+  font-weight: 600;
+}
+.channel-strip {
+  padding: 6px 10px;
+}
+.channel-chip {
+  padding: 4px 6px;
+}
+.new-dot {
+  min-width: 10px;
+  min-height: 10px;
+  border-radius: 999px;
+  background: #3ea6ff;
+}
+
+/* ---------- Comments & search ---------- */
+.comments-list {
+  background: none;
+}
+.comment {
+  padding: 10px 14px;
+}
+.parent-comment {
+  padding: 14px;
+}
+.heart {
+  color: @yt_red;
+}
+.replies-button {
+  padding: 2px 8px;
+  margin-left: -8px;
+  color: #3ea6ff;
+  font-weight: 600;
+}
+.suggestions {
+  background: none;
+}
+.suggestion {
+  padding: 4px 12px;
+  min-height: 40px;
+}
+.download-row {
+  padding: 8px 10px;
+}
+.sidebar-section {
+  margin: 12px 18px 0 18px;
+  opacity: 0.7;
+}

@@ -1,0 +1,17 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "broadway",
+      "runtimeExecutable": "gtk4-broadwayd",
+      "runtimeArgs": [":5"],
+      "port": 8085
+    },
+    {
+      "name": "broadway-6",
+      "runtimeExecutable": "gtk4-broadwayd",
+      "runtimeArgs": [":6"],
+      "port": 8086
+    }
+  ]
+}

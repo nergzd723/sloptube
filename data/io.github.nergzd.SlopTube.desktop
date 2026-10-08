@@ -1,0 +1,12 @@
+[Desktop Entry]
+Name=SlopTube
+GenericName=YouTube Client
+Comment=Watch YouTube with hardware-accelerated playback
+Exec=sloptube %U
+Icon=io.github.nergzd.SlopTube
+Terminal=false
+Type=Application
+Categories=AudioVideo;Video;Player;GTK;
+Keywords=YouTube;Video;Player;Streaming;Music;
+StartupNotify=true
+X-Purism-FormFactor=Workstation;Mobile;
