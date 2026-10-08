@@ -421,10 +421,14 @@ page).
   showing the same paintable is interpolated from the player's rectangle to the
   mini player thumbnail's. The details fade with
   `smoothstep((progress − 0.12) / 0.6)`, and the mini bar fades in below 0.35.
-- `attach_collapse_drag` (on the video) follows vertical drags after 10 px and
-  gives up on horizontal ones; pulling up more than 80 px at full size asks for
-  fullscreen. `attach_expand_drag` (on the mini bar) follows upward drags, opens
-  on a tap, and dismisses on a horizontal swipe past 35 % of the width.
+- `attach_collapse_drag` (on the video) follows vertical drags once they pass
+  10 px, measured from that point so the sheet doesn't jump, and gives up on
+  horizontal ones; pulling up more than 80 px at full size asks for fullscreen.
+  The video moves with the sheet, so the pointer is tracked in surface (window)
+  coordinates: `GestureDrag`'s widget-relative offsets shrink as the sheet
+  moves, which made it bounce between two positions.
+  `attach_expand_drag` (on the mini bar) follows upward drags, opens on a tap,
+  and dismisses on a horizontal swipe past 35 % of the width.
 - On release, a fling faster than 1.4 progress units per second decides the
   direction; otherwise the sheet opens when progress is above 0.66 (when the drag
   started open) or 0.25 (when it started closed). `animate_to` runs an
