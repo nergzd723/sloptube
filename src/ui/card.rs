@@ -147,6 +147,17 @@ impl ItemCard {
         imp.menu_button.add_css_class("card-menu");
         imp.menu_button.set_valign(gtk::Align::Start);
         imp.menu_button.set_tooltip_text(Some("More"));
+        // Build the menu only when opened: setting a model creates a whole popover,
+        // which made binding (and so scrolling the feeds) noticeably slower.
+        imp.menu_button.set_create_popup_func(glib::clone!(
+            #[weak(rename_to = card)]
+            self,
+            move |mb| {
+                if let Some(item) = card.item() {
+                    mb.set_menu_model(Some(&Self::menu_for(&item)));
+                }
+            }
+        ));
         self.setup_actions();
 
         if style.compact {
@@ -278,7 +289,8 @@ impl ItemCard {
         imp.item.replace(Some(item.clone()));
         let scale = self.scale_factor().max(1) as u32;
         let thumb_width = if style.compact { 168 } else { 400 } * scale;
-        imp.menu_button.set_menu_model(Some(&Self::menu_for(item)));
+        // Dropping the model drops the old popover; a new one is built on first open.
+        imp.menu_button.set_menu_model(None::<&gio::MenuModel>);
         imp.channel_avatar_big.set_visible(false);
         imp.picture.set_visible(true);
         imp.badge.set_visible(false);
