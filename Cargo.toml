@@ -2,7 +2,7 @@
 name = "sloptube"
 version = "0.1.0"
 edition = "2024"
-rust-version = "1.85"
+rust-version = "1.96"
 description = "A lightweight native YouTube client for Linux (GTK4/libadwaita + GStreamer)"
 license = "GPL-3.0-or-later"
 
