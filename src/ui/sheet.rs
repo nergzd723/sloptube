@@ -321,20 +321,45 @@ impl PlayerSheet {
     pub fn attach_collapse_drag(&self, widget: &impl IsA<gtk::Widget>, on_drag_start: impl Fn() + 'static, on_pull_up: impl Fn() + 'static) {
         let drag = gtk::GestureDrag::new();
         let started = std::rc::Rc::new(Cell::new(false));
+        // The widget moves with the sheet, so GestureDrag's widget-relative offsets
+        // would shrink by however far the sheet just moved and the drag would bounce
+        // between two positions. Track the pointer in surface coordinates instead.
+        let start = std::rc::Rc::new(Cell::new(None::<(f64, f64)>));
+        // Offset at which the drag was recognised, so the sheet doesn't jump by the threshold.
+        let grab_dy = std::rc::Rc::new(Cell::new(0.0));
+        let offset = glib::clone!(
+            #[strong]
+            start,
+            move |g: &gtk::GestureDrag, dx: f64, dy: f64| match (start.get(), g.current_event().and_then(|e| e.position())) {
+                (Some((x0, y0)), Some((x, y))) => (x - x0, y - y0),
+                _ => (dx, dy),
+            }
+        );
+        let offset = std::rc::Rc::new(offset);
         drag.connect_drag_begin(glib::clone!(
             #[strong]
             started,
-            move |_, _, _| started.set(false)
+            #[strong]
+            start,
+            move |g, _, _| {
+                started.set(false);
+                start.set(g.current_event().and_then(|e| e.position()));
+            }
         ));
         drag.connect_drag_update(glib::clone!(
             #[weak(rename_to = sheet)]
             self,
             #[strong]
             started,
+            #[strong]
+            grab_dy,
+            #[strong]
+            offset,
             move |g, dx, dy| {
                 if sheet.imp().locked.get() {
                     return;
                 }
+                let (dx, dy) = offset(g, dx, dy);
                 if !started.get() {
                     if dx.abs().max(dy.abs()) < 10.0 {
                         return;
@@ -344,13 +369,13 @@ impl PlayerSheet {
                         return;
                     }
                     started.set(true);
+                    grab_dy.set(dy);
                     g.set_state(gtk::EventSequenceState::Claimed);
                     on_drag_start();
                     sheet.begin_drag();
                 }
-                if dy > 0.0 {
-                    sheet.drag_to(sheet.imp().drag_origin.get() - dy / sheet.travel());
-                }
+                // drag_to clamps, so pulling back above the start just stays expanded.
+                sheet.drag_to(sheet.imp().drag_origin.get() - (dy - grab_dy.get()) / sheet.travel());
             }
         ));
         drag.connect_drag_end(glib::clone!(
@@ -358,11 +383,14 @@ impl PlayerSheet {
             self,
             #[strong]
             started,
-            move |_, _, dy| {
+            #[strong]
+            offset,
+            move |g, dx, dy| {
                 if !started.get() {
                     return;
                 }
                 started.set(false);
+                let (_, dy) = offset(g, dx, dy);
                 if dy < -80.0 && sheet.progress() >= 0.999 {
                     on_pull_up();
                     return;
