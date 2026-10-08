@@ -378,7 +378,7 @@ impl WatchView {
         imp.related_header.append(&autoplay);
         imp.related_header.add_css_class("related-header");
         imp.related_list.set_orientation(gtk::Orientation::Vertical);
-        imp.related_list.set_spacing(12);
+        imp.related_list.set_spacing(20);
         imp.related_list.add_css_class("related-list");
         imp.related_more.set_label("Show more");
         imp.related_more.add_css_class("flat");
@@ -389,12 +389,8 @@ impl WatchView {
             move |_| view.load_more_related()
         ));
 
-        let clamp = adw::Clamp::builder()
-            .maximum_size(900)
-            .tightening_threshold(600)
-            .child(d)
-            .build();
-        imp.details_scroll.set_child(Some(&clamp));
+        // Full width, left-aligned under the player (no centring clamp).
+        imp.details_scroll.set_child(Some(d));
         imp.details_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.details_scroll.set_vexpand(true);
         imp.details_scroll.vadjustment().connect_value_changed(glib::clone!(
@@ -509,9 +505,6 @@ impl WatchView {
     fn set_wide(&self, wide: bool) {
         self.imp().wide.set(wide);
         self.place_related();
-        if let Some(d) = self.playback().details() {
-            self.fill_related(&d.related, true);
-        }
     }
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
@@ -726,9 +719,9 @@ impl WatchView {
                 imp.related_list.remove(&c);
             }
         }
-        let style = if imp.wide.get() { CardStyle::COMPACT } else { CardStyle::GRID };
+        // Big thumbnail cards in both layouts, like the YouTube app's tablet sidebar.
         for item in items {
-            let card = ItemCard::new(style);
+            let card = ItemCard::new(CardStyle::GRID);
             card.bind(item);
             card.make_clickable();
             imp.related_list.append(&card);
