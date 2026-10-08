@@ -46,7 +46,10 @@ try:
                     ir, xr = f.get("initRange"), f.get("indexRange")
                     if not (f.get("itag") and ir and xr):
                         continue
-                    key = f"{f['itag']}{'-drc' if f.get('isDrc') else ''}"
+                    # One itag can cover many streams (dubbed audio tracks, DRC), and
+                    # yt-dlp then renames them "140-0", "140-1", ...; the content
+                    # length tells the streams apart, see _ranges_by_format_id.
+                    key = (str(f["itag"]), str(f.get("contentLength") or ""))
                     ranges.setdefault(key, {
                         "init": [int(ir["start"]), int(ir["end"])],
                         "index": [int(xr["start"]), int(xr["end"])],
@@ -65,6 +68,19 @@ try:
     YoutubeIE._extract_formats_and_subtitles = _capturing_formats
 except Exception:  # pragma: no cover
     pass
+
+
+def _ranges_for(raw_ranges, f):
+    """Byte ranges captured for the stream behind a yt-dlp format, if any."""
+    itag = str(f.get("format_id") or "").split("-")[0]
+    size = f.get("filesize")
+    if size is not None:
+        r = raw_ranges.get((itag, str(size)))
+        if r is not None:
+            return r
+    # Without a size, only an itag with a single stream is unambiguous.
+    matches = [r for (i, _), r in raw_ranges.items() if i == itag]
+    return matches[0] if len(matches) == 1 else None
 
 
 class _QuietLogger:
@@ -116,8 +132,13 @@ def extract(req):
     _capture.tracking = None
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(req["url"], download=False)
+    raw_ranges = getattr(_capture, "ranges", None) or {}
+    ranges = {}
     formats = []
     for f in info.get("formats") or []:
+        r = _ranges_for(raw_ranges, f)
+        if r is not None and f.get("format_id"):
+            ranges[f["format_id"]] = r
         if not f.get("url"):
             continue
         formats.append({k: f[k] for k in FORMAT_KEYS if f.get(k) is not None})
@@ -135,7 +156,7 @@ def extract(req):
         "captions": _captions(info.get("subtitles"))
         + _captions(info.get("automatic_captions"), lambda l: l.endswith("-orig")),
         "tracking": getattr(_capture, "tracking", None),
-        "ranges": getattr(_capture, "ranges", None) or {},
+        "ranges": ranges,
     }
 
 

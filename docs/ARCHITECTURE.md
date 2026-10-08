@@ -210,7 +210,10 @@ video, `extractor.rs` keeps one Python process with yt-dlp imported:
 `tracking` and `ranges` are not something yt-dlp provides. The helper wraps
 `YoutubeIE._extract_formats_and_subtitles` to read them from the raw player
 responses: the `initRange`/`indexRange` of every adaptive format (needed for
-DASH, below) and the `playbackTracking` URLs (needed for watch history). This
+DASH, below) and the `playbackTracking` URLs (needed for watch history). One
+itag can cover many streams (dubbed audio tracks, DRC), which yt-dlp renames
+`140-0`, `140-1`, ...; the helper captures ranges by itag and content length
+and hands them back keyed by yt-dlp's final `format_id`. This
 is the most fragile part of SlopTube: if a yt-dlp update renames that method,
 extraction still works but those two fields come back empty, which means plain
 HTTP streams for MP4 and no history.
