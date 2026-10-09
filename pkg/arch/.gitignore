@@ -1,0 +1,5 @@
+/src/
+/pkg/
+/sloptube/
+*.pkg.tar.*
+.SRCINFO.tmp

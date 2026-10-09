@@ -118,7 +118,18 @@ Build features:
 For example, `cargo build --release --no-default-features --features static-sink`
 builds without WebKitGTK.
 
-There is no package yet. To install for your user:
+On Arch Linux, [`pkg/arch/PKGBUILD`](pkg/arch/PKGBUILD) builds a
+`sloptube-git` package that installs system-wide and pulls in the runtime
+dependencies. To package your local checkout:
+
+```sh
+cd pkg/arch
+SLOPTUBE_SRC=file://$(git rev-parse --show-toplevel) makepkg -si
+```
+
+Without `SLOPTUBE_SRC` it builds from the GitHub repository.
+
+To install for your user only, without a package:
 
 ```sh
 install -Dm755 target/release/sloptube ~/.local/bin/sloptube

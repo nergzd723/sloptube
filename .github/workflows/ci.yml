@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build and test
+    runs-on: ubuntu-latest
+    # GTK 4.20 and libadwaita 1.7 are newer than any Ubuntu runner ships, so
+    # build inside Arch, which is also what the PKGBUILD targets.
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: |
+          pacman -Syu --noconfirm --needed \
+            base-devel git rust pkgconf \
+            gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
+            gst-plugins-bad gst-plugins-bad-libs webkitgtk-6.0 \
+            sqlite openssl dbus
+
+      - uses: actions/checkout@v4
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: cargo-x86_64-${{ hashFiles('Cargo.lock') }}
+          restore-keys: cargo-x86_64-
+
+      - name: Build
+        run: cargo build --locked
+
+      - name: Test
+        run: cargo test --locked
+
+      - name: Build without WebKit
+        run: cargo check --locked --no-default-features --features static-sink
+
+      - name: Clippy
+        run: cargo clippy --locked --all-targets
+
+  package:
+    name: Arch package
+    runs-on: ubuntu-latest
+    container: archlinux:latest
+    steps:
+      - name: Install dependencies
+        run: pacman -Syu --noconfirm --needed base-devel git sudo
+
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      # makepkg refuses to run as root
+      - name: Build package from this checkout
+        run: |
+          useradd -m builder
+          echo 'builder ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/builder
+          chown -R builder .
+          git config --global --add safe.directory "$PWD"
+          sudo -u builder env SLOPTUBE_SRC="file://$PWD" \
+            bash -c 'cd pkg/arch && makepkg -s --noconfirm'
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sloptube-arch-package
+          path: pkg/arch/*.pkg.tar.zst
