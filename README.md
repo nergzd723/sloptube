@@ -5,6 +5,11 @@ libadwaita. The interface is modelled on the YouTube phone app and adapts from
 phone to desktop. Video is decoded on the GPU or VPU through GStreamer (VA-API
 or V4L2) and handed to the compositor without copies.
 
+> [!WARNING]
+> SlopTube is vibecoded: it was written largely by an AI coding assistant and
+> has not been well tested. Expect bugs and rough edges, and see
+> [Status](#status) for what has and hasn't been tried.
+
 <p align="center">
   <img src="docs/screenshots/watch.png" width="400" alt="Watch page: the player, then title, channel, actions, description, comments and Up next">
   <img src="docs/screenshots/mini-player.png" width="400" alt="Home tab with the mini player docked above the bottom tabs">
@@ -85,7 +90,8 @@ with 1.28), and yt-dlp with a JavaScript runtime. On Arch Linux:
 
 ```sh
 sudo pacman -S --needed gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
-    gst-plugins-bad gst-plugins-bad-libs yt-dlp yt-dlp-ejs deno webkitgtk-6.0
+    gst-plugins-bad gst-plugins-bad-libs yt-dlp yt-dlp-ejs deno webkitgtk-6.0 \
+    sqlite openssl
 ```
 
 | Package | What for |
@@ -94,6 +100,7 @@ sudo pacman -S --needed gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-g
 | `gstreamer`, `gst-plugins-base`, `gst-plugins-good` | Playback: playbin3, the HTTP source, MP4 and WebM demuxers, DASH, Opus and VP9 decoding, V4L2 stateful decoders, audio output. |
 | `gst-plugins-bad`, `gst-plugins-bad-libs` | AAC, AV1 (aom) and H.264 (OpenH264) software decoders, video parsers, V4L2 stateless decoders. |
 | `yt-dlp`, `yt-dlp-ejs`, `deno` | Stream extraction. YouTube makes yt-dlp run JavaScript, so it needs a runtime such as Deno. |
+| `sqlite`, `openssl` | Reading cookies from browser profiles and decrypting them, and the keyring client. |
 | `webkitgtk-6.0` | The in-app Google sign-in. Only needed with the `webkit` build feature (on by default). |
 | `gst-plugin-va` *(recommended)* | VA-API hardware decoding on Intel, AMD and other VA-API GPUs. |
 | `gnome-keyring` *(recommended)* | Or any other Secret Service provider, to store the session. Without one it goes to a private file. |
