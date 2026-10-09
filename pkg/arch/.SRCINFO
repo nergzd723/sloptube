@@ -2,7 +2,7 @@ pkgbase = sloptube-git
 	pkgdesc = Lightweight native YouTube client (GTK4/libadwaita + GStreamer)
 	pkgver = r11.eae8d97
 	pkgrel = 1
-	url = https://github.com/nergzd/sloptube
+	url = https://github.com/nergzd723/sloptube
 	arch = x86_64
 	arch = aarch64
 	license = GPL-3.0-or-later
@@ -31,7 +31,7 @@ pkgbase = sloptube-git
 	conflicts = sloptube
 	options = !lto
 	options = !debug
-	source = sloptube::git+https://github.com/nergzd/sloptube.git
+	source = sloptube::git+https://github.com/nergzd723/sloptube.git
 	sha256sums = SKIP
 
 pkgname = sloptube-git

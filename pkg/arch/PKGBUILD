@@ -5,7 +5,7 @@ pkgver=r11.eae8d97
 pkgrel=1
 pkgdesc='Lightweight native YouTube client (GTK4/libadwaita + GStreamer)'
 arch=('x86_64' 'aarch64')
-url='https://github.com/nergzd/sloptube'
+url='https://github.com/nergzd723/sloptube'
 license=('GPL-3.0-or-later')
 depends=(
   'gtk4' 'libadwaita' 'webkitgtk-6.0'
