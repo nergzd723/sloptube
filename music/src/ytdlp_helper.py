@@ -26,6 +26,30 @@ except Exception as exc:  # pragma: no cover - reported to the app
     sys.exit(2)
 
 
+# The playback-tracking URL of the player response, which yt-dlp doesn't
+# expose: the app pings it so plays show up in the account's history.
+_capture = threading.local()
+try:
+    from yt_dlp.extractor.youtube import YoutubeIE
+
+    _orig_formats = YoutubeIE._extract_formats_and_subtitles
+
+    def _capturing_formats(self, video_id, player_responses, *args, **kwargs):
+        if getattr(_capture, "tracking", None) is None:
+            for pr in player_responses or []:
+                pt = isinstance(pr, dict) and pr.get("playbackTracking")
+                if pt:
+                    _capture.tracking = {
+                        "playback": (pt.get("videostatsPlaybackUrl") or {}).get("baseUrl"),
+                    }
+                    break
+        return _orig_formats(self, video_id, player_responses, *args, **kwargs)
+
+    YoutubeIE._extract_formats_and_subtitles = _capturing_formats
+except Exception:  # pragma: no cover - extraction still works without it
+    pass
+
+
 class _QuietLogger:
     def debug(self, msg):
         pass
@@ -62,6 +86,7 @@ def extract(req):
     }
     if req.get("cookiefile"):
         opts["cookiefile"] = req["cookiefile"]
+    _capture.tracking = None
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(req["url"], download=False)
     formats = [
@@ -75,6 +100,7 @@ def extract(req):
         "duration": info.get("duration"),
         "is_live": bool(info.get("is_live")),
         "formats": formats,
+        "tracking": getattr(_capture, "tracking", None),
     }
 
 

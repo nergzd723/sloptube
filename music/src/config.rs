@@ -25,6 +25,17 @@ pub fn data_dir() -> PathBuf {
     ensure(glib::user_data_dir().join("sloptube-music"))
 }
 
+/// Per-session private directory (tmpfs, 0700) for short-lived secrets like the yt-dlp cookie jar.
+pub fn runtime_dir() -> PathBuf {
+    let dir = ensure(glib::user_runtime_dir().join("sloptube-music"));
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dir, std::fs::Permissions::from_mode(0o700));
+    }
+    dir
+}
+
 /// Write a file atomically (temporary file + rename).
 pub fn write_atomic(path: &std::path::Path, data: &[u8]) -> std::io::Result<()> {
     let tmp = path.with_extension("tmp");

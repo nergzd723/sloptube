@@ -161,6 +161,9 @@ pub struct Track {
     pub set_video_id: Option<String>,
     #[serde(default)]
     pub unavailable: bool,
+    /// The signed-in account's rating, when the response says.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub liked: Option<bool>,
 }
 
 impl Track {
@@ -417,6 +420,23 @@ pub struct Lyrics {
 pub struct Suggestions {
     pub queries: Vec<String>,
     pub items: Vec<Item>,
+}
+
+/// The signed-in account (from `account/account_menu`).
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AccountInfo {
+    pub name: String,
+    #[serde(default)]
+    pub handle: Option<String>,
+    #[serde(default)]
+    pub avatar: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Rating {
+    Like,
+    Dislike,
+    Indifferent,
 }
 
 /// "4:09" / "1:02:03" -> seconds.

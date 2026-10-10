@@ -289,8 +289,7 @@ impl CollectionView {
     fn toggle_saved(&self) {
         let Some(card) = self.card() else { return };
         let lib = Library::get();
-        let saved = !lib.is_saved(&card.target.id);
-        lib.set_saved(&card, saved);
+        let saved = lib.toggle_saved(&card);
         super::toast(if saved { "Saved to library" } else { "Removed from library" });
         self.update_saved();
     }

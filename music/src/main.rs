@@ -1,7 +1,9 @@
 #![allow(clippy::type_complexity)] // Boxed GTK callbacks.
 
+mod account;
 mod api;
 mod application;
+mod auth;
 mod config;
 mod extractor;
 mod image;

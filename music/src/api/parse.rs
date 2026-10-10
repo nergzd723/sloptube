@@ -120,6 +120,16 @@ fn is_video_type(t: &str) -> bool {
     )
 }
 
+/// The account's rating of an item, from its menu's like button (signed in only).
+fn like_status(r: &Value) -> Option<bool> {
+    let menu = r.get("menu")?;
+    match find_key(menu, "likeStatus")?.as_str()? {
+        "LIKE" => Some(true),
+        "INDIFFERENT" | "DISLIKE" => Some(false),
+        _ => None,
+    }
+}
+
 fn is_explicit(r: &Value) -> bool {
     r.get("badges")
         .is_some_and(|b| b.to_string().contains("MUSIC_EXPLICIT_BADGE"))
@@ -453,6 +463,7 @@ fn parse_list_item(r: &Value) -> Option<Item> {
         }
     }
     t.index = r.get("index").and_then(text).and_then(|s| s.trim().parse().ok());
+    t.liked = like_status(r);
     t.explicit = is_explicit(r);
     t.unavailable = str_at(r, "/musicItemRendererDisplayPolicy") == Some("MUSIC_ITEM_RENDERER_DISPLAY_POLICY_GREY_OUT");
     t.playlist_id = title_nav.and_then(|n| string_at(n, "/watchEndpoint/playlistId"));
@@ -490,6 +501,7 @@ fn parse_panel_video(r: &Value) -> Option<Track> {
         .and_then(music_video_type)
         .map(is_video_type)
         .unwrap_or_else(|| wide_thumbnails(&t.thumbnails));
+    t.liked = like_status(r);
     let byline = r.get("longBylineText").or_else(|| r.get("shortBylineText"));
     for (i, seg) in byline.map(runs).map(split_segments).unwrap_or_default().iter().enumerate() {
         match classify(seg) {
@@ -1042,6 +1054,23 @@ pub fn parse_lyrics(v: &Value) -> Option<Lyrics> {
     })
 }
 
+/// The signed-in account, or `None` when the session isn't signed in.
+pub fn parse_account_menu(v: &Value) -> Option<AccountInfo> {
+    let h = find_key(v, "activeAccountHeaderRenderer")?;
+    let name = h.get("accountName").and_then(text).unwrap_or_default();
+    if name.is_empty() {
+        return None;
+    }
+    Some(AccountInfo {
+        name,
+        handle: h.get("channelHandle").and_then(text).filter(|s| !s.is_empty()),
+        avatar: h
+            .get("accountPhoto")
+            .map(thumbnails)
+            .and_then(|t| thumb_url(&t, 96)),
+    })
+}
+
 pub fn parse_suggestions(v: &Value) -> Suggestions {
     let mut s = Suggestions::default();
     let mut found = Vec::new();
@@ -1187,6 +1216,21 @@ mod tests {
             assert!(page.tracks.len() >= 10);
             assert!(page.tracks.iter().all(|t| !t.artists.is_empty() && t.duration.is_some()));
         }
+    }
+
+    #[test]
+    fn account_menu() {
+        let v = serde_json::json!({"actions": [{"openPopupAction": {"popup": {"multiPageMenuRenderer": {"header": {
+            "activeAccountHeaderRenderer": {
+                "accountName": {"runs": [{"text": "Ada"}]},
+                "channelHandle": {"runs": [{"text": "@ada"}]},
+                "accountPhoto": {"thumbnails": [{"url": "https://yt3.ggpht.com/abc=s88-c-k", "width": 88, "height": 88}]}
+            }}}}}}]});
+        let a = parse_account_menu(&v).unwrap();
+        assert_eq!(a.name, "Ada");
+        assert_eq!(a.handle.as_deref(), Some("@ada"));
+        assert!(a.avatar.unwrap().ends_with("=w96-h96-l90-rj"));
+        assert!(parse_account_menu(&serde_json::json!({"actions": []})).is_none());
     }
 
     #[test]

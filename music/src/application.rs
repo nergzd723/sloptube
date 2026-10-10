@@ -51,6 +51,7 @@ mod imp {
                     log::debug!("could not refresh the client version: {e:#}");
                 }
             });
+            crate::account::Account::get().load_stored();
             // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.
             Playback::get().restore_session();
         }
@@ -168,6 +169,11 @@ impl Application {
         add("preferences", |app| ui::preferences::present(&app.main_window()));
         add("about", |app| app.show_about());
         add("shortcuts", |app| show_shortcuts(&app.main_window()));
+        add("sign-in", |app| {
+            let win = app.main_window();
+            win.present();
+            ui::login::present(&win);
+        });
         // app.search('query') searches; an empty query opens the search page.
         let search = gio::SimpleAction::new("search", Some(glib::VariantTy::STRING));
         search.connect_activate(glib::clone!(

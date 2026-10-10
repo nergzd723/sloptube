@@ -123,8 +123,7 @@ impl ArtistView {
                 let card = view.imp().page.borrow().as_ref().map(ArtistPage::card);
                 if let Some(c) = card {
                     let lib = Library::get();
-                    let saved = !lib.is_saved(&c.target.id);
-                    lib.set_saved(&c, saved);
+                    let saved = lib.toggle_saved(&c);
                     super::toast(if saved { "Saved to library" } else { "Removed from library" });
                     view.update_saved();
                 }

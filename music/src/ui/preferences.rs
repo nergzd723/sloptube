@@ -1,9 +1,12 @@
 //! Preferences.
 
 use adw::prelude::*;
+use gtk::glib;
 
+use crate::account::{self, Account};
 use crate::api;
 use crate::config;
+use crate::image;
 use crate::library::Library;
 use crate::settings::{self, AudioQuality, ColorScheme};
 
@@ -32,6 +35,74 @@ pub fn present(parent: &impl IsA<gtk::Widget>) {
     let s = settings::get();
     let dialog = adw::PreferencesDialog::new();
     let page = adw::PreferencesPage::new();
+
+    let account_group = adw::PreferencesGroup::builder().title("Account").build();
+    let who = adw::ActionRow::new();
+    let avatar = adw::Avatar::new(40, None, true);
+    who.add_prefix(&avatar);
+    let button = gtk::Button::new();
+    button.set_valign(gtk::Align::Center);
+    who.add_suffix(&button);
+    let update = glib::clone!(
+        #[weak]
+        who,
+        #[weak]
+        avatar,
+        #[weak]
+        button,
+        move |acc: &Account| {
+            if acc.signed_in() {
+                who.set_title(&glib::markup_escape_text(&acc.name()));
+                who.set_subtitle(&glib::markup_escape_text(&acc.handle()));
+                avatar.set_text(Some(&acc.name()));
+                let url = acc.avatar();
+                image::set_url(&avatar, (!url.is_empty()).then_some(url.as_str()), 96);
+                button.set_label("Sign Out");
+                button.set_action_name(Some("win.sign-out"));
+                button.remove_css_class("suggested-action");
+            } else {
+                who.set_title("Not signed in");
+                who.set_subtitle("Sign in for your recommendations, library, likes and history");
+                avatar.set_text(None);
+                image::set_url(&avatar, None, 0);
+                button.set_label("Sign In…");
+                button.set_action_name(Some("win.sign-in"));
+                button.add_css_class("suggested-action");
+            }
+        }
+    );
+    let acc = Account::get();
+    update(&acc);
+    let ids: Vec<glib::SignalHandlerId> = ["signed-in", "name", "avatar"]
+        .into_iter()
+        .map(|p| {
+            let update = update.clone();
+            acc.connect_notify_local(Some(p), move |a, _| update(a))
+        })
+        .collect();
+    let ids = std::cell::RefCell::new(ids);
+    dialog.connect_closed(move |_| {
+        for id in ids.borrow_mut().drain(..) {
+            Account::get().disconnect(id);
+        }
+    });
+    account_group.add(&who);
+    account_group.add(&switch_row(
+        "Use the account for audio",
+        Some("Premium audio quality and age-restricted songs"),
+        s.use_account_for_streams,
+        |v| {
+            settings::update(|s| s.use_account_for_streams = v);
+            account::update_stream_cookies();
+        },
+    ));
+    account_group.add(&switch_row(
+        "Add plays to YouTube history",
+        Some("Songs played here appear in your history and shape recommendations"),
+        s.send_history,
+        |v| settings::update(|s| s.send_history = v),
+    ));
+    page.add(&account_group);
 
     let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
     let schemes = [ColorScheme::Dark, ColorScheme::System, ColorScheme::Light];

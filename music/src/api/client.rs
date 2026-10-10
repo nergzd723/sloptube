@@ -8,9 +8,10 @@ use serde_json::{Value, json};
 
 use super::model::*;
 use super::parse;
+use crate::auth::{self, Session};
 
 const BASE: &str = "https://music.youtube.com/youtubei/v1";
-const ORIGIN: &str = "https://music.youtube.com";
+const ORIGIN: &str = auth::ORIGIN;
 pub const USER_AGENT: &str =
     "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
 const DEFAULT_CLIENT_VERSION: &str = "1.20261006.10.00";
@@ -19,6 +20,9 @@ struct State {
     visitor_data: Option<String>,
     client_version: String,
     region: Option<String>,
+    session: Option<Session>,
+    /// Google refreshed some cookies since the session was last saved.
+    session_dirty: bool,
 }
 
 pub struct Client {
@@ -53,7 +57,41 @@ impl Client {
                 visitor_data: None,
                 client_version: DEFAULT_CLIENT_VERSION.to_owned(),
                 region: None,
+                session: None,
+                session_dirty: false,
             }),
+        }
+    }
+
+    pub fn set_session(&self, session: Option<Session>) {
+        let mut st = self.state.write().unwrap();
+        st.session = session;
+        st.session_dirty = false;
+        // A different identity: let YouTube hand out fresh visitor data.
+        st.visitor_data = None;
+    }
+
+    pub fn session(&self) -> Option<Session> {
+        self.state.read().unwrap().session.clone()
+    }
+
+    pub fn is_signed_in(&self) -> bool {
+        self.state
+            .read()
+            .unwrap()
+            .session
+            .as_ref()
+            .is_some_and(Session::is_signed_in)
+    }
+
+    /// The session, if its cookies changed since the last call (for saving).
+    pub fn take_dirty_session(&self) -> Option<Session> {
+        let mut st = self.state.write().unwrap();
+        if st.session_dirty {
+            st.session_dirty = false;
+            st.session.clone()
+        } else {
+            None
         }
     }
 
@@ -97,7 +135,40 @@ impl Client {
         if let Some(vd) = st.visitor_data.as_deref().and_then(|v| HeaderValue::from_str(v).ok()) {
             h.insert("X-Goog-Visitor-Id", vd);
         }
+        if let Some(s) = st.session.as_ref().filter(|s| s.is_signed_in()) {
+            if let Ok(v) = HeaderValue::from_str(&s.cookie_header(auth::HOST)) {
+                h.insert(header::COOKIE, v);
+            }
+            if let Some(a) = s.authorization().and_then(|a| HeaderValue::from_str(&a).ok()) {
+                h.insert(header::AUTHORIZATION, a);
+            }
+            h.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
+            h.insert("X-Origin", HeaderValue::from_static(ORIGIN));
+            h.insert("X-Youtube-Bootstrap-Logged-In", HeaderValue::from_static("true"));
+        }
         h
+    }
+
+    /// Keep cookies Google refreshes through `Set-Cookie`.
+    fn absorb_cookies(&self, resp: &reqwest::Response) {
+        let host = resp.url().host_str().unwrap_or(auth::HOST).to_owned();
+        let set: Vec<String> = resp
+            .headers()
+            .get_all(header::SET_COOKIE)
+            .iter()
+            .filter_map(|v| v.to_str().ok().map(str::to_owned))
+            .collect();
+        if set.is_empty() {
+            return;
+        }
+        let mut st = self.state.write().unwrap();
+        if let Some(session) = st.session.as_mut() {
+            let mut changed = false;
+            for c in &set {
+                changed |= session.apply_set_cookie(c, &host);
+            }
+            st.session_dirty |= changed;
+        }
     }
 
     pub async fn post(&self, endpoint: &str, mut body: Value) -> Result<Value> {
@@ -112,6 +183,7 @@ impl Client {
             .send()
             .await
             .with_context(|| format!("request to {endpoint} failed"))?;
+        self.absorb_cookies(&resp);
         let status = resp.status();
         let bytes = resp
             .bytes()
@@ -280,9 +352,69 @@ impl Client {
         Ok(parse::parse_next(&v))
     }
 
+    // -----------------------------------------------------------------------
+    // Account
+    // -----------------------------------------------------------------------
+
+    /// Who is signed in; `None` when YouTube considers the session signed out.
+    pub async fn account_info(&self) -> Result<Option<AccountInfo>> {
+        let v = self.post("account/account_menu", json!({})).await?;
+        Ok(parse::parse_account_menu(&v))
+    }
+
+    /// Like, dislike or clear the rating of a song.
+    pub async fn rate_song(&self, video_id: &str, rating: Rating) -> Result<()> {
+        self.post(rate_endpoint(rating), json!({ "target": { "videoId": video_id } }))
+            .await
+            .map(drop)
+    }
+
+    /// Save an album or playlist to the library (like) or remove it.
+    pub async fn rate_playlist(&self, playlist_id: &str, rating: Rating) -> Result<()> {
+        self.post(rate_endpoint(rating), json!({ "target": { "playlistId": playlist_id } }))
+            .await
+            .map(drop)
+    }
+
+    pub async fn set_subscribed(&self, channel_id: &str, subscribed: bool) -> Result<()> {
+        let endpoint = if subscribed {
+            "subscription/subscribe"
+        } else {
+            "subscription/unsubscribe"
+        };
+        self.post(endpoint, json!({ "channelIds": [channel_id] })).await.map(drop)
+    }
+
+    /// Report a play to the account's history (the player response's tracking URL).
+    pub async fn report_play(&self, tracking_url: &str) -> Result<()> {
+        const CPN_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
+        let cpn: String = (0..16)
+            .map(|_| CPN_CHARS[rand::random_range(0..CPN_CHARS.len())] as char)
+            .collect();
+        let mut url = url::Url::parse(tracking_url)?;
+        url.query_pairs_mut()
+            .append_pair("ver", "2")
+            .append_pair("c", "WEB_REMIX")
+            .append_pair("cpn", &cpn);
+        let resp = self.http.get(url).headers(self.headers()).send().await?;
+        self.absorb_cookies(&resp);
+        if !resp.status().is_success() {
+            bail!("history ping returned {}", resp.status());
+        }
+        Ok(())
+    }
+
     pub async fn lyrics(&self, browse_id: &str) -> Result<Option<Lyrics>> {
         let v = self.browse(browse_id, None).await?;
         Ok(parse::parse_lyrics(&v))
+    }
+}
+
+fn rate_endpoint(rating: Rating) -> &'static str {
+    match rating {
+        Rating::Like => "like/like",
+        Rating::Dislike => "like/dislike",
+        Rating::Indifferent => "like/removelike",
     }
 }
 

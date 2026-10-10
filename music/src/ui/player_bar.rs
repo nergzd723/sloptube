@@ -391,7 +391,7 @@ impl PlayerBar {
         let imp = self.imp();
         let liked = Playback::get()
             .current_track()
-            .is_some_and(|t| Library::get().is_liked(&t.video_id));
+            .is_some_and(|t| Library::get().is_track_liked(&t));
         if liked {
             imp.like.add_css_class("liked");
         } else {

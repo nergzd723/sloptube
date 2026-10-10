@@ -148,8 +148,11 @@ pub fn menu_for(item: &Item) -> gio::Menu {
             playing.append(Some("Start radio"), Some("item.radio"));
             menu.append_section(None, &playing);
             let lib = gio::Menu::new();
-            let liked = Library::get().is_liked(&t.video_id);
+            let liked = Library::get().is_track_liked(t);
             lib.append(Some(if liked { "Remove from liked songs" } else { "Like" }), Some("item.like"));
+            if api::client().is_signed_in() {
+                lib.append(Some("Dislike"), Some("item.dislike"));
+            }
             menu.append_section(None, &lib);
             let go = gio::Menu::new();
             if t.album.is_some() {
@@ -255,12 +258,24 @@ pub fn install(widget: &impl IsA<gtk::Widget>, get: Rc<dyn Fn() -> Option<Item>>
         }),
     );
     add(
+        "dislike",
+        Box::new(|_, item| {
+            if let Item::Track(t) = &item {
+                Library::get().dislike(t);
+                let pb = Playback::get();
+                if pb.video_id() == t.video_id {
+                    pb.next();
+                }
+                toast("Disliked; YouTube Music will play less like it");
+            }
+        }),
+    );
+    add(
         "save",
         Box::new(|_, item| {
             if let Item::Card(c) = &item {
                 let lib = Library::get();
-                let saved = !lib.is_saved(&c.target.id);
-                lib.set_saved(c, saved);
+                let saved = lib.toggle_saved(c);
                 toast(if saved { "Saved to library" } else { "Removed from library" });
             }
         }),

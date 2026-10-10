@@ -4,6 +4,7 @@
 //! useful without a Google account.
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use gtk::glib;
@@ -12,8 +13,9 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::api::{Card, Track};
+use crate::api::{self, Card, CardKind, Rating, Track};
 use crate::config;
+use crate::runtime;
 
 const HISTORY_MAX: usize = 300;
 
@@ -50,6 +52,8 @@ mod imp {
     pub struct Library {
         pub data: RefCell<Data>,
         pub save_pending: Cell<bool>,
+        /// Likes changed here this session, over what YouTube reported.
+        pub like_overrides: RefCell<HashMap<String, bool>>,
     }
 
     #[glib::object_subclass]
@@ -138,10 +142,78 @@ impl Library {
         self.changed("liked");
     }
 
+    /// Whether a song is liked: changed here, liked locally, or liked on the account.
+    pub fn is_track_liked(&self, track: &Track) -> bool {
+        if let Some(l) = self.imp().like_overrides.borrow().get(&track.video_id) {
+            return *l;
+        }
+        self.is_liked(&track.video_id) || track.liked == Some(true)
+    }
+
+    /// Like or unlike; signed in, the rating goes to YouTube too.
     pub fn toggle_liked(&self, track: &Track) -> bool {
-        let liked = !self.is_liked(&track.video_id);
+        let liked = !self.is_track_liked(track);
+        self.imp()
+            .like_overrides
+            .borrow_mut()
+            .insert(track.video_id.clone(), liked);
         self.set_liked(track, liked);
+        if api::client().is_signed_in() {
+            let id = track.video_id.clone();
+            let rating = if liked { Rating::Like } else { Rating::Indifferent };
+            remote(async move { api::client().rate_song(&id, rating).await }, "Couldn't update the like on YouTube");
+        }
         liked
+    }
+
+    /// Dislike a song on the account (and drop it from liked songs).
+    pub fn dislike(&self, track: &Track) {
+        self.imp()
+            .like_overrides
+            .borrow_mut()
+            .insert(track.video_id.clone(), false);
+        self.set_liked(track, false);
+        if api::client().is_signed_in() {
+            let id = track.video_id.clone();
+            remote(
+                async move { api::client().rate_song(&id, Rating::Dislike).await },
+                "Couldn't dislike the song on YouTube",
+            );
+        }
+    }
+
+    /// Save or remove an album, playlist or artist; signed in, also in the
+    /// account's library (artists: subscribe).
+    pub fn toggle_saved(&self, card: &Card) -> bool {
+        let saved = !self.is_saved(&card.target.id);
+        self.set_saved(card, saved);
+        if api::client().is_signed_in() {
+            let rating = if saved { Rating::Like } else { Rating::Indifferent };
+            match card.kind {
+                CardKind::Artist | CardKind::Profile => {
+                    let id = card.target.id.clone();
+                    remote(
+                        async move { api::client().set_subscribed(&id, saved).await },
+                        "Couldn't update the subscription on YouTube",
+                    );
+                }
+                _ => {
+                    // Albums are saved through their playlist (OLAK…).
+                    let playlist = card
+                        .play
+                        .as_ref()
+                        .and_then(|p| p.playlist_id.clone())
+                        .or_else(|| card.target.id.strip_prefix("VL").map(str::to_owned));
+                    if let Some(pl) = playlist {
+                        remote(
+                            async move { api::client().rate_playlist(&pl, rating).await },
+                            "Couldn't update your YouTube library",
+                        );
+                    }
+                }
+            }
+        }
+        saved
     }
 
     pub fn liked(&self) -> Vec<Track> {
@@ -189,4 +261,14 @@ impl Library {
         self.imp().data.borrow_mut().history.clear();
         self.changed("history");
     }
+}
+
+/// Run an account request in the background; tell the user if it fails.
+fn remote(fut: impl std::future::Future<Output = anyhow::Result<()>> + Send + 'static, failure: &'static str) {
+    glib::spawn_future_local(async move {
+        if let Err(e) = runtime::run(fut).await {
+            log::warn!("{failure}: {e:#}");
+            crate::ui::toast(&format!("{failure}: {e}"));
+        }
+    });
 }

@@ -76,6 +76,9 @@ pub fn page(title: &str, tag: Option<&str>, content: &impl IsA<gtk::Widget>, roo
         header.set_show_title(false);
         logo_widget = Some(logo);
     }
+    if root {
+        header.pack_end(&super::login::account_button());
+    }
     let menu = gtk::MenuButton::builder()
         .icon_name("open-menu-symbolic")
         .menu_model(&primary_menu())

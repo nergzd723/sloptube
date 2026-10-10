@@ -315,6 +315,21 @@ impl Window {
         if let Some(home) = imp.home.borrow().as_ref() {
             home.ensure_loaded();
         }
+        // Recommendations depend on who is signed in.
+        crate::account::Account::get().connect_signed_in_notify(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |_| {
+                let imp = win.imp();
+                if let Some(home) = imp.home.borrow().as_ref() {
+                    home.reload();
+                }
+                if let Some(explore) = imp.explore.borrow().as_ref()
+                    && explore.rows().is_loaded() {
+                        explore.reload();
+                    }
+            }
+        ));
     }
 
     fn reload_sidebar_saved(&self) {
@@ -565,6 +580,12 @@ impl Window {
         action("next", |_| Playback::get().next());
         action("previous", |_| Playback::get().previous());
         action("show-liked", |w| w.navigate(Nav::Local(LocalList::Liked)));
+        action("sign-in", super::login::present);
+        action("sign-out", super::login::confirm_sign_out);
+        action("show-account", |w| {
+            w.collapse_player();
+            w.imp().stack.set_visible_child_name("library");
+        });
     }
 
     fn setup_shortcuts(&self) {

@@ -7,6 +7,7 @@ pub mod browse;
 pub mod cards;
 pub mod collection;
 pub mod library;
+pub mod login;
 pub mod lyrics;
 pub mod now_playing;
 pub mod page;

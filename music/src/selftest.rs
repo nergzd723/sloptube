@@ -114,5 +114,55 @@ pub async fn run() -> Result<()> {
         );
     }
     println!("{}", rss());
+    account().await
+}
+
+/// With a stored session: who is signed in, and how much each library section returns.
+async fn account() -> Result<()> {
+    if !crate::settings::get().has_session && !crate::auth::fallback_exists() {
+        println!("account: not signed in (sign in in the app to check the library)");
+        return Ok(());
+    }
+    let Some(session) = crate::auth::load().await.filter(crate::auth::Session::is_signed_in) else {
+        println!("account: no usable stored session");
+        return Ok(());
+    };
+    let c = api::client();
+    c.set_session(Some(session));
+    let info = c.account_info().await.context("account menu")?;
+    match info {
+        Some(a) => println!("account: signed in as {} {}", a.name, a.handle.unwrap_or_default()),
+        None => {
+            println!("account: YouTube says this session is signed out");
+            return Ok(());
+        }
+    }
+    let home = c.browse_page("FEmusic_home", None).await.context("home (signed in)")?;
+    println!("home (signed in): {} shelves", home.shelves.len());
+    for (name, id) in [
+        ("playlists", "FEmusic_liked_playlists"),
+        ("songs", "FEmusic_liked_videos"),
+        ("albums", "FEmusic_liked_albums"),
+        ("artists", "FEmusic_library_corpus_track_artists"),
+        ("subscriptions", "FEmusic_library_corpus_artists"),
+        ("history", "FEmusic_history"),
+    ] {
+        match c.browse_page(id, None).await {
+            Ok(p) => println!(
+                "library {name}: {} shelves, {} items",
+                p.shelves.len(),
+                p.shelves.iter().map(|s| s.items.len()).sum::<usize>()
+            ),
+            Err(e) => println!("library {name}: failed: {e:#}"),
+        }
+    }
+    match c.collection("VLLM").await {
+        Ok(p) => println!(
+            "liked music: {} tracks, {} rated as liked",
+            p.tracks.len(),
+            p.tracks.iter().filter(|t| t.liked == Some(true)).count()
+        ),
+        Err(e) => println!("liked music: failed: {e:#}"),
+    }
     Ok(())
 }

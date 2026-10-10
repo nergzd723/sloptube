@@ -6,6 +6,21 @@ rust-version = "1.96"
 description = "A lightweight native YouTube Music client for Linux (GTK4/libadwaita + GStreamer)"
 license = "GPL-3.0-or-later"
 
+[features]
+default = ["webkit"]
+# The in-app Google sign-in window, built as the separate `sloptube-music-login`
+# binary so the player itself never loads WebKit.
+webkit = ["dep:webkit"]
+
+[[bin]]
+name = "sloptube-music"
+path = "src/main.rs"
+
+[[bin]]
+name = "sloptube-music-login"
+path = "src/bin/login.rs"
+required-features = ["webkit"]
+
 [dependencies]
 gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
@@ -22,6 +37,16 @@ log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 libc = "0.2"
 mpris-server = "0.10"
+
+# Google account: session storage, request signing, browser cookie import
+oo7 = { version = "0.6", default-features = false, features = ["tokio", "openssl_crypto"] }
+sha1 = "0.10"
+hex = "0.4"
+rusqlite = "0.37"
+aes = "0.8"
+cbc = "0.1"
+pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+webkit = { package = "webkit6", version = "0.6", optional = true, features = ["v2_46"] }
 
 [profile.release]
 lto = "thin"

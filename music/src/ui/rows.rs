@@ -432,6 +432,10 @@ impl RowList {
         self.imp().on_loaded.borrow_mut().push(Box::new(f));
     }
 
+    pub fn is_loaded(&self) -> bool {
+        self.imp().loaded.get()
+    }
+
     pub fn ensure_loaded(&self) {
         let imp = self.imp();
         if !imp.loaded.get() && !imp.loading.get() {

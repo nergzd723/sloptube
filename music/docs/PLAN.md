@@ -84,8 +84,11 @@ sheet), but is a separate, audio-only app: no video pipeline, no WebKit.
    gapless, shuffle/repeat, Now playing with Up next/Lyrics/Related, mini
    player and desktop bar, MPRIS, preferences, local library (liked songs,
    saved albums/playlists/artists, history).
-2. Google account (port SlopTube's keyring session, in-app sign-in and
-   browser import): personal home, library sync, likes, playlists, history.
+2. **Done**: Google account. The session in the keyring, signed requests,
+   sign-in in a separate WebKit process (`sloptube-music-login`) so the player
+   never loads WebKit, Firefox and Chromium import; personalised Home, the
+   YouTube Music library, likes/dislikes, saving and subscribing, Premium
+   streams, plays added to history. Next: creating and editing playlists.
 3. Downloads for offline listening; time-synced lyrics; Song/Video toggle
    (video through SlopTube's pipeline); InnerTube player fast path to skip
    yt-dlp where possible; packaging (PKGBUILD, Flatpak).

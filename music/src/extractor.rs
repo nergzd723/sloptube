@@ -87,6 +87,13 @@ impl Format {
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
+pub struct Tracking {
+    /// Pinged to add a play to the account's history.
+    #[serde(default)]
+    pub playback: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Deserialize)]
 #[allow(dead_code)] // Part of the helper's protocol; handy in the debugger.
 pub struct StreamInfo {
     pub id: String,
@@ -98,6 +105,8 @@ pub struct StreamInfo {
     pub is_live: bool,
     #[serde(default)]
     pub formats: Vec<Format>,
+    #[serde(default)]
+    pub tracking: Option<Tracking>,
 }
 
 impl StreamInfo {
@@ -149,6 +158,8 @@ pub struct Extractor {
     helper_broken: Mutex<bool>,
     last_use: Mutex<Instant>,
     cache: Mutex<HashMap<String, (Instant, Arc<StreamInfo>)>>,
+    /// Netscape cookie file of the signed-in account, passed to yt-dlp.
+    cookie_file: Mutex<Option<PathBuf>>,
     /// Extractions in flight, so a prefetch and a play share one request.
     inflight: Mutex<HashMap<String, Vec<oneshot::Sender<std::result::Result<Arc<StreamInfo>, String>>>>>,
 }
@@ -163,6 +174,7 @@ pub fn extractor() -> &'static Extractor {
         helper_broken: Mutex::new(false),
         last_use: Mutex::new(Instant::now()),
         cache: Mutex::new(HashMap::new()),
+        cookie_file: Mutex::new(None),
         inflight: Mutex::new(HashMap::new()),
     })
 }
@@ -205,6 +217,16 @@ impl Extractor {
             .get(id)
             .filter(|(t, _)| t.elapsed() < CACHE_TTL)
             .map(|(_, i)| i.clone())
+    }
+
+    /// Extract as the signed-in account (or anonymously with `None`). Cached
+    /// results belong to the previous identity and are dropped.
+    pub fn set_cookie_file(&self, path: Option<PathBuf>) {
+        let mut current = self.cookie_file.lock().unwrap();
+        if *current != path {
+            *current = path;
+            self.cache.lock().unwrap().clear();
+        }
     }
 
     pub fn invalidate(&self, id: &str) {
@@ -285,15 +307,16 @@ impl Extractor {
         let url = format!("https://music.youtube.com/watch?v={id}");
         let started = Instant::now();
         let broken = *self.helper_broken.lock().unwrap();
+        let cookies = self.cookie_file.lock().unwrap().clone();
         let value = if broken {
-            self.cli_extract(&url).await?
+            self.cli_extract(&url, cookies.as_deref()).await?
         } else {
-            match self.helper_request(&url).await {
+            match self.helper_request(&url, cookies.as_deref()).await {
                 Ok(v) => v,
                 Err(HelperError::Unavailable(e)) => {
                     log::warn!("yt-dlp helper unavailable ({e:#}); falling back to the CLI");
                     *self.helper_broken.lock().unwrap() = true;
-                    self.cli_extract(&url).await?
+                    self.cli_extract(&url, cookies.as_deref()).await?
                 }
                 Err(HelperError::Failed(msg)) => bail!(msg),
             }
@@ -408,9 +431,12 @@ impl Extractor {
         Ok(Helper { stdin, _child: child })
     }
 
-    async fn helper_request(&self, url: &str) -> std::result::Result<Value, HelperError> {
+    async fn helper_request(&self, url: &str, cookiefile: Option<&Path>) -> std::result::Result<Value, HelperError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let req = json!({ "id": id, "op": "extract", "url": url });
+        let mut req = json!({ "id": id, "op": "extract", "url": url });
+        if let Some(c) = cookiefile {
+            req["cookiefile"] = json!(c);
+        }
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
         *self.last_use.lock().unwrap() = Instant::now();
@@ -461,12 +487,15 @@ impl Extractor {
         res
     }
 
-    async fn cli_extract(&self, url: &str) -> Result<Value> {
+    async fn cli_extract(&self, url: &str, cookiefile: Option<&Path>) -> Result<Value> {
         let ytdlp = ytdlp_path().ok_or_else(|| anyhow!("yt-dlp is not installed"))?;
         let mut cmd = Command::new(ytdlp);
         cmd.args(["-J", "--no-warnings", "--no-playlist", url])
             .stdin(Stdio::null())
             .kill_on_drop(true);
+        if let Some(c) = cookiefile {
+            cmd.arg("--cookies").arg(c);
+        }
         let out = tokio::time::timeout(REQUEST_TIMEOUT, cmd.output())
             .await
             .context("yt-dlp took too long")??;

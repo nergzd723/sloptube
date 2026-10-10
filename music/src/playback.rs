@@ -257,6 +257,7 @@ impl Playback {
                         if !imp.counted.replace(true)
                             && let Some(t) = pb.current_track() {
                                 Library::get().add_history(&t);
+                                pb.report_play(&t.video_id);
                             }
                     }
                     PlayState::Paused => {
@@ -1001,6 +1002,7 @@ impl Playback {
         if let Some(t) = self.current_track() {
             imp.counted.set(true);
             Library::get().add_history(&t);
+            self.report_play(&t.video_id);
         }
         self.save_session();
         self.prepare_next();
@@ -1033,6 +1035,26 @@ impl Playback {
             }
         }
         self.prepare_next();
+    }
+
+    /// Add a play to the account's YouTube history.
+    fn report_play(&self, video_id: &str) {
+        if !api::client().is_signed_in() || !settings::get().send_history {
+            return;
+        }
+        let Some(url) = extractor()
+            .cached(video_id)
+            .and_then(|i| i.tracking.clone())
+            .and_then(|t| t.playback)
+        else {
+            log::debug!("no tracking URL for {video_id}; not added to history");
+            return;
+        };
+        runtime::spawn(async move {
+            if let Err(e) = api::client().report_play(&url).await {
+                log::warn!("adding the play to history failed: {e:#}");
+            }
+        });
     }
 
     // -----------------------------------------------------------------------
