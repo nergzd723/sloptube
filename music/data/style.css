@@ -1,0 +1,536 @@
+/* SlopTube Music: YouTube Music's look on top of libadwaita. */
+
+@define-color yt_red #ff0033;
+
+/* YouTube Music is near black in dark mode. */
+@media (prefers-color-scheme: dark) {
+  :root {
+    --window-bg-color: #0f0f0f;
+    --view-bg-color: #0f0f0f;
+    --headerbar-bg-color: #0f0f0f;
+    --sidebar-bg-color: #0a0a0a;
+    --secondary-sidebar-bg-color: #0a0a0a;
+    --popover-bg-color: #262626;
+    --dialog-bg-color: #1c1c1c;
+    --card-bg-color: rgba(255, 255, 255, 0.06);
+  }
+}
+
+:root {
+  --accent-bg-color: #e5002d;
+  --accent-color: #ff4e6b;
+}
+
+/* ---------- Header and sidebar ---------- */
+.app-logo {
+  margin-left: 4px;
+}
+.logo-text {
+  font-weight: 800;
+  font-size: 1.3em;
+  letter-spacing: -0.04em;
+}
+.sidebar-section {
+  margin: 10px 18px 0 18px;
+  opacity: 0.7;
+}
+.sidebar-icon {
+  border-radius: 4px;
+  background: alpha(currentColor, 0.1);
+}
+headerbar.over-banner {
+  background: none;
+  box-shadow: none;
+}
+
+/* ---------- Lists and shelves ---------- */
+listview.row-list {
+  background: none;
+  padding-bottom: 24px;
+}
+listview.row-list > row {
+  padding: 0;
+  background: none;
+}
+listview.row-list > row:hover,
+listview.row-list > row:selected {
+  background: none;
+}
+.list-row:hover {
+  background: alpha(currentColor, 0.05);
+}
+.chips {
+  padding: 10px 16px 4px 16px;
+}
+.chip {
+  border-radius: 8px;
+  padding: 6px 14px;
+  min-height: 22px;
+  font-weight: 600;
+  background: alpha(currentColor, 0.1);
+  box-shadow: none;
+}
+.chip:hover {
+  background: alpha(currentColor, 0.16);
+}
+.chip:checked {
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+.shelf {
+  margin-top: 22px;
+}
+.shelf-header {
+  padding: 0 16px;
+}
+.shelf-title {
+  font-size: 1.45em;
+  font-weight: 800;
+}
+.shelf-strapline {
+  font-size: 0.78em;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  opacity: 0.65;
+}
+.shelf-arrow {
+  min-width: 34px;
+  min-height: 34px;
+  background: alpha(currentColor, 0.08);
+}
+.shelf-arrow:disabled {
+  opacity: 0.35;
+}
+.pill-small {
+  border-radius: 999px;
+  padding: 4px 14px;
+  min-height: 24px;
+  font-weight: 600;
+  background: alpha(currentColor, 0.1);
+}
+.pill-small:hover {
+  background: alpha(currentColor, 0.17);
+}
+.primary-pill {
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+.primary-pill:hover {
+  background: alpha(@window_fg_color, 0.85);
+}
+.carousel,
+.track-columns {
+  padding: 0 10px;
+}
+.shelf-list {
+  padding: 0;
+}
+.section-title {
+  font-size: 1.35em;
+  font-weight: 800;
+  padding: 24px 16px 8px 16px;
+}
+.shelf-text {
+  padding: 0 16px;
+}
+.shelf-text + button {
+  margin-left: 6px;
+}
+.inline-status {
+  padding: 56px 24px;
+}
+
+/* ---------- Tiles ---------- */
+.tile {
+  padding: 6px;
+  border-radius: 12px;
+  background: none;
+  font-weight: normal;
+}
+.tile:hover {
+  background: alpha(currentColor, 0.06);
+}
+.tile-title {
+  font-weight: 600;
+  margin-top: 8px;
+}
+.tile-subtitle {
+  font-size: 0.88em;
+  margin-top: 2px;
+}
+.tile-play {
+  min-width: 40px;
+  min-height: 40px;
+  color: white;
+  background: rgba(0, 0, 0, 0.62);
+  opacity: 0;
+  transition: opacity 150ms ease-out;
+}
+.tile-play:hover {
+  background: rgba(0, 0, 0, 0.8);
+}
+.tile:hover .tile-play,
+.tile:focus-visible .tile-play {
+  opacity: 1;
+}
+.tile-grid {
+  padding: 0 10px;
+}
+gridview.tile-gridview {
+  background: none;
+  padding: 12px 10px 24px 10px;
+}
+gridview.tile-gridview > child {
+  padding: 2px;
+  background: none;
+}
+.mood-grid {
+  padding: 0 16px;
+}
+.mood-tile {
+  padding: 0 12px 0 0;
+  min-height: 46px;
+  border-radius: 8px;
+  font-weight: 600;
+  background: alpha(currentColor, 0.08);
+}
+.mood-tile:hover {
+  background: alpha(currentColor, 0.14);
+}
+.mood-tile > box > swatch {
+  border-radius: 8px 0 0 8px;
+}
+
+/* ---------- Rows ---------- */
+.list-row {
+  padding: 8px 12px 8px 16px;
+}
+.list-row.compact {
+  padding: 6px 4px;
+}
+.row-title {
+  font-weight: 600;
+}
+.row-subtitle {
+  font-size: 0.92em;
+}
+.list-row.playing .row-title {
+  color: var(--accent-color);
+}
+.list-row.unavailable {
+  opacity: 0.45;
+}
+.explicit {
+  font-size: 0.66em;
+  font-weight: 800;
+  padding: 0 4px;
+  border-radius: 2px;
+  color: @window_bg_color;
+  background: alpha(@window_fg_color, 0.55);
+}
+.playing-indicator {
+  color: white;
+  background: rgba(0, 0, 0, 0.55);
+  border-radius: 4px;
+}
+.track-number {
+  font-size: 0.95em;
+}
+.queue-list .list-row.current {
+  background: alpha(currentColor, 0.08);
+}
+
+/* ---------- Album / playlist header ---------- */
+.collection-header {
+  padding: 24px 20px 16px 20px;
+}
+.collection-art {
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.45);
+}
+.collection-title {
+  font-size: 1.85em;
+  font-weight: 800;
+}
+.collection-description {
+  margin-top: 4px;
+}
+.collection-buttons {
+  margin-top: 12px;
+}
+.artist-links {
+  font-weight: 600;
+}
+.artist-links link {
+  color: inherit;
+  text-decoration-line: none;
+}
+.artist-links link:hover {
+  text-decoration-line: underline;
+}
+.big-play {
+  min-width: 58px;
+  min-height: 58px;
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+.big-play:hover {
+  background: alpha(@window_fg_color, 0.85);
+}
+.big-play image {
+  -gtk-icon-size: 26px;
+}
+button.header-action,
+menubutton.header-action > button {
+  min-width: 44px;
+  min-height: 44px;
+  border-radius: 999px;
+  background: alpha(currentColor, 0.1);
+}
+button.header-action:hover,
+menubutton.header-action > button:hover {
+  background: alpha(currentColor, 0.17);
+}
+
+/* ---------- Artist ---------- */
+.banner-fade {
+  background: linear-gradient(to bottom, alpha(@window_bg_color, 0.1) 0%, alpha(@window_bg_color, 0.35) 45%, @window_bg_color 100%);
+}
+.artist-info {
+  padding: 24px 20px 16px 20px;
+}
+.artist-name {
+  font-size: 2.5em;
+  font-weight: 800;
+}
+.artist-header {
+  min-height: 220px;
+}
+
+/* ---------- Library ---------- */
+.library-shortcuts {
+  padding: 16px 16px 0 16px;
+}
+.library-shortcut {
+  padding: 14px 16px;
+  border-radius: 12px;
+  background: alpha(currentColor, 0.08);
+}
+.library-shortcut:hover {
+  background: alpha(currentColor, 0.13);
+}
+.library-shortcut-icon {
+  color: var(--accent-color);
+}
+
+/* ---------- Search ---------- */
+.suggestions {
+  background: none;
+  padding: 6px 0;
+}
+.suggestion {
+  padding: 6px 16px;
+  min-height: 40px;
+}
+.fill-arrow image {
+  -gtk-icon-transform: rotate(-45deg);
+}
+
+/* ---------- Player bar ---------- */
+.mini-player,
+.desktop-bar {
+  background: mix(@window_bg_color, @window_fg_color, 0.09);
+}
+.mini-row {
+  padding: 8px 8px 8px 10px;
+}
+.bar-title {
+  font-weight: 600;
+}
+.bar-artist {
+  font-size: 0.92em;
+}
+progressbar.mini-progress > trough {
+  min-height: 2px;
+  border-radius: 0;
+  background: alpha(currentColor, 0.15);
+}
+progressbar.mini-progress > trough > progress {
+  min-height: 2px;
+  border-radius: 0;
+  background: @window_fg_color;
+}
+.bar-row {
+  padding: 2px 14px 10px 14px;
+}
+.bar-center {
+  padding: 0 8px;
+}
+.bar-play {
+  min-width: 46px;
+  min-height: 46px;
+}
+.bar-play image {
+  -gtk-icon-size: 22px;
+}
+scale.bar-seek {
+  padding: 0;
+  margin-top: -2px;
+}
+scale.bar-seek > trough {
+  min-height: 3px;
+  border-radius: 0;
+  background: alpha(currentColor, 0.15);
+}
+scale.bar-seek > trough > highlight {
+  min-height: 3px;
+  border-radius: 0;
+  background: @yt_red;
+}
+scale.bar-seek > trough > slider {
+  min-width: 12px;
+  min-height: 12px;
+  margin: -5px;
+  background: @yt_red;
+  box-shadow: none;
+  border: none;
+  opacity: 0;
+}
+scale.bar-seek:hover > trough > slider {
+  opacity: 1;
+}
+scale.bar-volume trough highlight {
+  background: @window_fg_color;
+}
+.liked {
+  color: var(--accent-color);
+}
+button.toggled,
+togglebutton:checked.flat {
+  color: var(--accent-color);
+  background: none;
+}
+
+/* ---------- Now playing ---------- */
+.now-playing {
+  background: @window_bg_color;
+}
+.floating-art {
+  border-radius: 10px;
+}
+.np-top {
+  padding: 6px 8px 0 8px;
+}
+.caption-heading {
+  font-weight: 700;
+}
+.np-art-slot {
+  padding: 12px 28px 8px 28px;
+}
+.np-info {
+  padding: 12px 24px 0 24px;
+}
+.np-title {
+  font-size: 1.5em;
+  font-weight: 800;
+}
+.np-artist {
+  font-size: 1.05em;
+  opacity: 0.75;
+}
+.np-pills {
+  padding: 12px 24px 4px 24px;
+}
+scale.np-seek {
+  margin: 10px 14px 0 14px;
+}
+scale.np-seek > trough {
+  min-height: 4px;
+  background: alpha(currentColor, 0.2);
+}
+scale.np-seek > trough > highlight {
+  min-height: 4px;
+  background: @window_fg_color;
+}
+scale.np-seek > trough > slider {
+  min-width: 14px;
+  min-height: 14px;
+  margin: -5px;
+  background: @window_fg_color;
+  box-shadow: none;
+  border: none;
+}
+.np-times {
+  padding: 0 24px;
+  opacity: 0.7;
+}
+.np-transport {
+  padding: 10px 20px 18px 20px;
+}
+.np-play {
+  min-width: 74px;
+  min-height: 74px;
+  background: @window_fg_color;
+  color: @window_bg_color;
+}
+.np-play:hover {
+  background: alpha(@window_fg_color, 0.85);
+}
+.np-play image {
+  -gtk-icon-size: 34px;
+}
+.np-skip image {
+  -gtk-icon-size: 28px;
+}
+.np-spinner {
+  color: @window_bg_color;
+  padding: 18px;
+}
+.np-sheet-bar {
+  padding: 4px 8px 6px 8px;
+}
+.np-sheet-bar button,
+.np-tab {
+  font-size: 0.85em;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+}
+.np-tabs {
+  padding: 0 8px;
+  box-shadow: inset 0 -1px alpha(currentColor, 0.1);
+}
+sheet .np-tabs {
+  padding-top: 14px;
+}
+.np-tab {
+  border-radius: 0;
+  padding: 12px 6px;
+  background: none;
+  opacity: 0.6;
+}
+.np-tab:checked {
+  opacity: 1;
+  background: none;
+  color: inherit;
+  box-shadow: inset 0 -2px @window_fg_color;
+}
+.np-wide {
+  padding: 16px 32px 24px 24px;
+}
+.np-tabs-box {
+  min-width: 360px;
+}
+bottom-sheet > sheet,
+.now-playing sheet {
+  background: mix(@window_bg_color, @window_fg_color, 0.07);
+}
+.queue-header {
+  padding: 14px 16px 6px 16px;
+}
+.lyrics-box {
+  padding: 24px 24px 48px 24px;
+}
+.lyrics {
+  font-size: 1.3em;
+  font-weight: 700;
+  line-height: 1.5;
+}
