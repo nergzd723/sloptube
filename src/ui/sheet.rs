@@ -16,6 +16,9 @@ use gtk::{glib, graphene, gsk};
 
 use super::watch::WatchView;
 
+/// How far (px) the mini player must be dragged up before letting go opens it.
+const MIN_EXPAND_DRAG: f64 = 64.0;
+
 type Rect = (f32, f32, f32, f32);
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -460,8 +463,12 @@ impl PlayerSheet {
             widget,
             #[strong]
             mode,
-            move |_, dx, _| {
+            move |_, dx, dy| {
                 match mode.replace(0) {
+                    // A short flick that starts on the bar is usually meant to scroll
+                    // the feed above it, and even a short one is fast enough to count
+                    // as a fling, so only a deliberate drag opens the player.
+                    1 if -dy < MIN_EXPAND_DRAG => sheet.animate_to(0.0, 0.0),
                     1 => sheet.release(),
                     2 => {
                         widget.set_opacity(1.0);

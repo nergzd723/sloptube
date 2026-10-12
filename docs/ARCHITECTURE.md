@@ -446,7 +446,10 @@ page).
   coordinates: `GestureDrag`'s widget-relative offsets shrink as the sheet
   moves, which made it bounce between two positions.
   `attach_expand_drag` (on the mini bar) follows upward drags, opens on a tap,
-  and dismisses on a horizontal swipe past 35 % of the width.
+  and dismisses on a horizontal swipe past 35 % of the width. A drag released
+  less than 64 px up falls back to the bar whatever its speed: thumbs flick
+  the feed upward from near the bar, and even a short flick beats the fling
+  speed below.
 - On release, a fling faster than 1.4 progress units per second decides the
   direction; otherwise the sheet opens when progress is above 0.66 (when the drag
   started open) or 0.25 (when it started closed). `animate_to` runs an
