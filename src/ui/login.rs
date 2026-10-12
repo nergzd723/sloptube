@@ -4,10 +4,10 @@ use adw::prelude::*;
 use gtk::glib;
 
 use crate::account::Account;
-use crate::auth::{self, Cookie, Session, chromium};
+use crate::auth::{self, Session, chromium};
 use crate::runtime;
 
-#[cfg(feature = "webkit")]
+#[cfg(all(feature = "webkit", target_os = "linux"))]
 const SIGN_IN_URL: &str = "https://accounts.google.com/ServiceLogin?service=youtube&uilel=3&passive=true&hl=en&continue=https%3A%2F%2Fwww.youtube.com%2Fsignin%3Faction_handle_signin%3Dtrue%26app%3Ddesktop%26hl%3Den%26next%3D%252F";
 
 async fn finish(dialog: &adw::Dialog, session: Session) {
@@ -29,8 +29,9 @@ async fn finish(dialog: &adw::Dialog, session: Session) {
     }
 }
 
-#[cfg(feature = "webkit")]
+#[cfg(all(feature = "webkit", target_os = "linux"))]
 fn webkit_page(dialog: &adw::Dialog) -> adw::NavigationPage {
+    use crate::auth::Cookie;
     use webkit::prelude::*;
 
     let network = webkit::NetworkSession::new_ephemeral();
@@ -132,7 +133,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>) {
     page.add(&intro);
 
     let google = adw::PreferencesGroup::new();
-    #[cfg(feature = "webkit")]
+    #[cfg(all(feature = "webkit", target_os = "linux"))]
     {
         let button = gtk::Button::with_label("Sign in with Google");
         button.add_css_class("pill");
@@ -147,7 +148,7 @@ pub fn present(parent: &impl IsA<gtk::Widget>) {
         ));
         google.add(&button);
     }
-    #[cfg(not(feature = "webkit"))]
+    #[cfg(not(all(feature = "webkit", target_os = "linux")))]
     {
         google.set_description(Some("This build has no built-in browser; import a session from your browser below."));
     }

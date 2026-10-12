@@ -119,7 +119,7 @@ Build features:
 
 | Feature | Default | Effect |
 |---|---|---|
-| `webkit` | on | In-app Google sign-in through WebKitGTK 6.0. Without it, signing in works only by importing a browser session. |
+| `webkit` | on | In-app Google sign-in through WebKitGTK 6.0. Without it, signing in works only by importing a browser session. Linux only: other platforms build without it. |
 | `static-sink` | on | Compiles GStreamer's `gtk4paintablesink` into the binary. Without it the system `gst-plugin-gtk4` package is used. |
 
 For example, `cargo build --release --no-default-features --features static-sink`
