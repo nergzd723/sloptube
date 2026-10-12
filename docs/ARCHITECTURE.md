@@ -415,8 +415,12 @@ on a scrolled window landed while it was moving, and the click handlers check
 ### Watch page and player
 
 `WatchView` (`watch.rs`) holds the player at the top, inside an `AspectBin`
-frame, and below it an `AdwNavigationView` with the details. Comments and
-replies are pushed into that navigation view. The frame's maximum height is a
+frame, and below it an `AdwNavigationView` with the details. In the two-column
+layout the right column is a stack of Up next and a comments panel (its own
+`AdwNavigationView`), so comments open over Up next as in the YouTube app on
+tablets; in one column they are pushed into the details navigation. Replies are
+pushed on top of their comments either way, and when the layout changes, open
+comments and replies move to the other place. The frame's maximum height is a
 fraction of the window (60 % narrow, 72 % wide, all of it in fullscreen), and
 the frame may shrink below 16:9 (letterboxing) so the details stay reachable.
 

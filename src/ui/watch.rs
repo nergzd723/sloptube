@@ -4,7 +4,7 @@ use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
-use gtk::glib;
+use gtk::{gio, glib};
 
 use super::aspect::AspectBin;
 use super::card::{CardStyle, ItemCard};
@@ -32,6 +32,9 @@ mod imp {
         pub details_box: gtk::Box,
         pub side_scroll: gtk::ScrolledWindow,
         pub side_box: gtk::Box,
+        /// The right column: Up next, or the comments panel over it.
+        pub side_stack: gtk::Stack,
+        pub side_nav: adw::NavigationView,
         pub title: gtk::Label,
         pub meta: gtk::Label,
         pub channel_avatar: adw::Avatar,
@@ -132,6 +135,15 @@ impl WatchView {
     fn build(&self) {
         let imp = self.imp();
         self.add_css_class("watch-view");
+        let actions = gio::SimpleActionGroup::new();
+        let close_comments = gio::SimpleAction::new("close-comments", None);
+        close_comments.connect_activate(glib::clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |_, _| view.close_comments()
+        ));
+        actions.add_action(&close_comments);
+        self.insert_action_group("watch", Some(&actions));
 
         let player_view = PlayerView::new(&self.playback());
         let frame = AspectBin::new(&player_view, 16.0 / 9.0);
@@ -434,12 +446,25 @@ impl WatchView {
         imp.side_scroll.set_child(Some(&imp.side_box));
         super::track_scrolling(&imp.side_scroll);
         imp.side_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
-        imp.side_scroll.set_size_request(400, -1);
+        imp.side_stack.add_named(&imp.side_scroll, Some("related"));
+        imp.side_stack.add_named(&imp.side_nav, Some("comments"));
+        imp.side_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
+        // Drop the closed comments once they have faded out.
+        imp.side_stack.connect_transition_running_notify(glib::clone!(
+            #[weak(rename_to = view)]
+            self,
+            move |stack| {
+                if !stack.is_transition_running() && stack.visible_child_name().as_deref() == Some("related") {
+                    view.imp().side_nav.replace(&[]);
+                }
+            }
+        ));
+        imp.side_stack.set_size_request(400, -1);
         // The cards' text boxes hexpand, which would otherwise propagate up through
-        // the ScrolledWindow and make the box split spare width 50/50 with the player.
-        imp.side_scroll.set_hexpand(false);
-        imp.side_scroll.add_css_class("side-pane");
-        imp.side_scroll.set_visible(false);
+        // the stack and make the box split spare width 50/50 with the player.
+        imp.side_stack.set_hexpand(false);
+        imp.side_stack.add_css_class("side-pane");
+        imp.side_stack.set_visible(false);
         imp.side_scroll.vadjustment().connect_value_changed(glib::clone!(
             #[weak(rename_to = view)]
             self,
@@ -452,7 +477,7 @@ impl WatchView {
 
         imp.columns.set_orientation(gtk::Orientation::Horizontal);
         imp.columns.append(&imp.main_col);
-        imp.columns.append(&imp.side_scroll);
+        imp.columns.append(&imp.side_stack);
 
         let bp_bin = adw::BreakpointBin::new();
         bp_bin.set_size_request(320, 200);
@@ -517,13 +542,14 @@ impl WatchView {
     fn set_wide(&self, wide: bool) {
         self.imp().wide.set(wide);
         self.place_related();
+        self.place_comments();
     }
 
     pub fn set_fullscreen(&self, fullscreen: bool) {
         let imp = self.imp();
         imp.fullscreen.set(fullscreen);
         imp.nav.set_visible(!fullscreen);
-        imp.side_scroll.set_visible(!fullscreen && imp.wide.get());
+        imp.side_stack.set_visible(!fullscreen && imp.wide.get());
         if let Some(f) = imp.player_frame.borrow().as_ref() {
             f.set_vexpand(fullscreen);
         }
@@ -547,13 +573,15 @@ impl WatchView {
         target.append(&imp.related_header);
         target.append(&imp.related_list);
         target.append(&imp.related_more);
-        imp.side_scroll.set_visible(wide && !imp.fullscreen.get());
+        imp.side_stack.set_visible(wide && !imp.fullscreen.get());
     }
 
     fn reset(&self) {
         let imp = self.imp();
         let pb = self.playback();
         imp.nav.pop_to_tag("details");
+        imp.side_stack.set_visible_child_full("related", gtk::StackTransitionType::None);
+        imp.side_nav.replace(&[]);
         imp.details_scroll.vadjustment().set_value(0.0);
         imp.side_scroll.vadjustment().set_value(0.0);
         imp.title.set_text(&pb.title());
@@ -778,11 +806,63 @@ impl WatchView {
         });
     }
 
+    fn comments_in_side_panel(&self) -> bool {
+        self.imp().side_stack.visible_child_name().as_deref() == Some("comments")
+    }
+
+    /// Comments open over Up next when it is beside the player (as in the YouTube
+    /// app on tablets), otherwise in the details below the player.
     fn open_comments(&self) {
         let Some(d) = self.playback().details() else { return };
         let Some(token) = d.comments_token.clone() else { return };
+        let imp = self.imp();
+        if self.comments_in_side_panel() || imp.nav.navigation_stack().n_items() > 1 {
+            return;
+        }
         let page = CommentsPage::new(&d.id, &token, d.comment_count.as_deref());
-        self.imp().nav.push(&page);
+        if imp.wide.get() {
+            imp.side_nav.replace(&[page.upcast()]);
+            imp.side_stack.set_visible_child_name("comments");
+        } else {
+            imp.nav.push(&page);
+        }
+    }
+
+    fn close_comments(&self) {
+        let imp = self.imp();
+        if self.comments_in_side_panel() {
+            imp.side_stack.set_visible_child_name("related");
+        } else {
+            imp.nav.pop_to_tag("details");
+        }
+    }
+
+    /// Keep open comments (and replies) when the layout switches between one
+    /// and two columns, moving them to where comments open in the new layout.
+    fn place_comments(&self) {
+        let imp = self.imp();
+        let pages = |nav: &adw::NavigationView| -> Vec<adw::NavigationPage> {
+            let stack = nav.navigation_stack();
+            (0..stack.n_items())
+                .filter_map(|i| stack.item(i).and_downcast::<adw::NavigationPage>())
+                .filter(|p| p.tag().as_deref() != Some("details"))
+                .collect()
+        };
+        let Some(details) = imp.nav.find_page("details") else { return };
+        if imp.wide.get() {
+            let open = pages(&imp.nav);
+            if !open.is_empty() {
+                imp.nav.replace(&[details]);
+                imp.side_nav.replace(&open);
+                imp.side_stack.set_visible_child_full("comments", gtk::StackTransitionType::None);
+            }
+        } else if self.comments_in_side_panel() {
+            let mut open = pages(&imp.side_nav);
+            imp.side_nav.replace(&[]);
+            imp.side_stack.set_visible_child_full("related", gtk::StackTransitionType::None);
+            open.insert(0, details);
+            imp.nav.replace(&open);
+        }
     }
 
     fn require_sign_in(&self) -> bool {

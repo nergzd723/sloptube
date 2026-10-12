@@ -1,4 +1,4 @@
-//! Comments and replies (pushed inside the watch view's navigation).
+//! Comments and replies (in the watch view's side panel or details navigation).
 
 use std::cell::{Cell, RefCell};
 
@@ -75,6 +75,11 @@ impl CommentsPage {
         header.set_show_end_title_buttons(false);
         header.set_show_start_title_buttons(false);
         if with_sort {
+            // The top-level page can be closed wherever it is shown (see `WatchView`).
+            let close = gtk::Button::from_icon_name("window-close-symbolic");
+            close.set_tooltip_text(Some("Close comments"));
+            close.set_action_name(Some("watch.close-comments"));
+            header.pack_end(&close);
             imp.sort.set_model(Some(&gtk::StringList::new(&["Top", "Newest"])));
             imp.sort.set_tooltip_text(Some("Sort comments"));
             imp.sort.set_sensitive(false);
