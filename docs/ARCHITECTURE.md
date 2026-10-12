@@ -470,6 +470,15 @@ its width is fixed with `set_size_request`, it uses that width instead of the
 get, and the mini player's 96 px thumbnail was once measured at ~540 px wide and
 made the bar about 300 px tall instead of 68 px.
 
+`WatchView` is an `AdwBin`, which lays out its child with a `GtkBinLayout`, and
+GTK never calls `size_allocate` on a widget that has a layout manager. The
+override that caps the player's height therefore never ran, and the video was
+always 16:9 of the full width: about 80 % of a window that is wide for its
+height but still one column. `WatchView` now drops the layout manager and lays
+out its child itself. The cap is set with `AspectBin::set_max_height`, which
+has the frame measured again, because GTK caches sizes per width and a window
+often changes only its height.
+
 ### Images (`image.rs`)
 
 Images are downloaded on the tokio runtime and decoded on a worker thread at

@@ -71,9 +71,29 @@ mod imp {
         type ParentType = adw::Bin;
     }
 
-    impl ObjectImpl for WatchView {}
+    impl ObjectImpl for WatchView {
+        fn constructed(&self) {
+            self.parent_constructed();
+            // AdwBin lays its child out with a GtkBinLayout, and GTK never calls the
+            // size_allocate of a widget that has a layout manager, so the player's
+            // height cap below never ran. Lay the child out here instead.
+            self.obj().set_layout_manager(None::<gtk::LayoutManager>);
+        }
+    }
 
     impl WidgetImpl for WatchView {
+        fn request_mode(&self) -> gtk::SizeRequestMode {
+            self.obj()
+                .child()
+                .map_or(gtk::SizeRequestMode::ConstantSize, |c| c.request_mode())
+        }
+
+        fn measure(&self, orientation: gtk::Orientation, for_size: i32) -> (i32, i32, i32, i32) {
+            self.obj()
+                .child()
+                .map_or((0, 0, -1, -1), |c| c.measure(orientation, for_size))
+        }
+
         fn size_allocate(&self, width: i32, height: i32, baseline: i32) {
             if let Some(frame) = self.player_frame.borrow().as_ref() {
                 let max = if self.fullscreen.get() {
@@ -83,9 +103,13 @@ mod imp {
                 } else {
                     (height as f64 * 0.6) as i32
                 };
-                frame.imp().max_height.set(max.max(120));
+                // Through the setter, which has the frame measured again when the cap
+                // changes (GTK caches sizes per width, and often only the height changes).
+                frame.set_max_height(max.max(120));
             }
-            self.parent_size_allocate(width, height, baseline);
+            if let Some(child) = self.obj().child() {
+                child.allocate(width, height, baseline, None);
+            }
         }
     }
 
