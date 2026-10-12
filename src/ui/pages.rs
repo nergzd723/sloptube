@@ -1,5 +1,6 @@
 //! Top-level tab pages (Home, Subscriptions, Library) and shared page chrome.
 
+use std::cell::Cell;
 use std::rc::Rc;
 
 use adw::prelude::*;
@@ -225,16 +226,24 @@ fn account_gated(content: &impl IsA<gtk::Widget>, signed_out: &impl IsA<gtk::Wid
     stack.add_named(&busy_page(), Some("busy"));
     let account = Account::get();
     let on_signed_in = Rc::new(on_signed_in);
+    // Both `signed-in` and `busy` change while a stored session is restored, so
+    // only act when signing in actually happens; reloading on each notification
+    // fetched the feed twice and swapped it right after it appeared.
+    let was_signed_in = Rc::new(Cell::new(false));
     let update = {
         let stack = stack.downgrade();
         let on_signed_in = on_signed_in.clone();
         move |a: &Account| {
             let Some(stack) = stack.upgrade() else { return };
-            if a.busy() && !a.signed_in() {
+            let signed_in = a.signed_in();
+            let became_signed_in = signed_in && !was_signed_in.replace(signed_in);
+            if a.busy() && !signed_in {
                 stack.set_visible_child_name("busy");
-            } else if a.signed_in() {
+            } else if signed_in {
                 stack.set_visible_child_name("content");
-                on_signed_in();
+                if became_signed_in {
+                    on_signed_in();
+                }
             } else {
                 stack.set_visible_child_name("signed-out");
             }
