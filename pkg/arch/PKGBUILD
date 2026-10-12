@@ -1,7 +1,7 @@
 # Maintainer: Markuss Broks <king26022005@gmail.com>
 pkgname=sloptube-git
 _pkgname=sloptube
-pkgver=r11.eae8d97
+pkgver=r14.67521b1
 pkgrel=1
 pkgdesc='Lightweight native YouTube client (GTK4/libadwaita + GStreamer)'
 arch=('x86_64' 'aarch64')
