@@ -353,7 +353,14 @@ impl Client {
 
     /// Resolve a youtube.com URL (handles, /c/ names, ...) into a browse id.
     pub async fn resolve_url(&self, url: &str) -> Result<String> {
-        let v = self.post("navigation/resolve_url", json!({ "url": url })).await?;
+        let v = match self.post("navigation/resolve_url", json!({ "url": url })).await {
+            Ok(v) => v,
+            // YouTube answers "404 Not Found: Requested entity was not found".
+            Err(e) if e.to_string().contains("404") => {
+                bail!("There's no channel at {}", url.trim_start_matches("https://www.youtube.com/"))
+            }
+            Err(e) => return Err(e),
+        };
         parse::find_key(&v, "browseEndpoint")
             .and_then(|e| e.get("browseId"))
             .and_then(Value::as_str)

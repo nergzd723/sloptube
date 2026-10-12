@@ -219,6 +219,11 @@ pub fn nav_for_youtube_url(url: &str) -> Option<Nav> {
                 Some(Nav::Channel(id.split('/').next()?.to_owned()))
             } else if path.starts_with("/@") {
                 Some(Nav::Channel(path.trim_start_matches('/').split('/').next()?.to_owned()))
+            } else if path.starts_with("/c/") || path.starts_with("/user/") {
+                // Older custom and user URLs; `channel()` resolves them like handles.
+                let mut parts = path.trim_start_matches('/').split('/');
+                let (kind, name) = (parts.next()?, parts.next().filter(|n| !n.is_empty())?);
+                Some(Nav::Channel(format!("{kind}/{name}")))
             } else if path == "/results" {
                 Some(Nav::Search(query("search_query")?))
             } else {
@@ -318,6 +323,9 @@ mod tests {
         }
         assert!(matches!(nav_for_youtube_url("https://youtu.be/xyz"), Some(Nav::Video { .. })));
         assert!(matches!(nav_for_youtube_url("https://www.youtube.com/@Blender"), Some(Nav::Channel(c)) if c == "@Blender"));
+        assert!(matches!(nav_for_youtube_url("https://www.youtube.com/c/LinusTechTips/videos"), Some(Nav::Channel(c)) if c == "c/LinusTechTips"));
+        assert!(matches!(nav_for_youtube_url("https://www.youtube.com/user/LinusTechTips"), Some(Nav::Channel(c)) if c == "user/LinusTechTips"));
+        assert!(nav_for_youtube_url("https://www.youtube.com/c/").is_none());
         assert!(nav_for_youtube_url("https://example.com/watch?v=abc").is_none());
     }
 
