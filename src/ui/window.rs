@@ -197,6 +197,11 @@ impl Window {
         // Tabs
         for (name, title, icon) in TABS {
             let nav = adw::NavigationView::new();
+            nav.connect_visible_page_notify(|nav| {
+                if let Some(page) = nav.visible_page() {
+                    hide_content_while_unmapped(&page);
+                }
+            });
             let root = match name {
                 "home" => {
                     let (page, feed) = pages::home_page(self);
@@ -211,6 +216,7 @@ impl Window {
                 }
                 _ => pages::library_page(self),
             };
+            hide_content_while_unmapped(&root);
             nav.add(&root);
             let p = imp.stack.add_titled_with_icon(&nav, Some(name), title, icon);
             p.set_use_underline(false);
@@ -812,4 +818,26 @@ impl Window {
         );
         dialog.present(Some(self));
     }
+}
+
+/// On every press and release GTK sets `:active` on each widget from the one
+/// pressed up to the window, and that restyles every widget in the window whose
+/// style depends on an ancestor's state. CSS only skips hidden widgets, not
+/// pages that stacks merely stop drawing, so each touch restyled every feed in
+/// the other tabs and the back stack (15-25 ms per press and release). Hide a
+/// page's content while the page is off screen to keep it out of that.
+fn hide_content_while_unmapped(page: &adw::NavigationPage) {
+    // SAFETY: the key is only ever used with `()`.
+    if unsafe { page.data::<()>("sloptube-hides-content") }.is_some() {
+        return;
+    }
+    unsafe { page.set_data("sloptube-hides-content", ()) };
+    let sync = |page: &adw::NavigationPage| {
+        if let Some(child) = page.child() {
+            child.set_visible(page.is_mapped());
+        }
+    };
+    page.connect_map(sync);
+    page.connect_unmap(sync);
+    sync(page);
 }

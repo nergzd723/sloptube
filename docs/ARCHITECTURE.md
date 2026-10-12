@@ -384,6 +384,14 @@ Pages are pushed onto the current tab's `AdwNavigationView` by
 sheet), and is what `sloptube:` links and command-line URLs end up calling.
 Selecting the current tab again in the sidebar pops back to its root.
 
+Pages that are off screen (the other tabs, and pages under the current one) have
+their content hidden until they are mapped again (`hide_content_while_unmapped`
+in `window.rs`). On every press and release GTK sets `:active` on each widget
+from the pressed one up to the window, which restyles every widget whose style
+depends on an ancestor's state. Style updates skip hidden widgets but not pages
+a stack merely stops drawing, so without this each touch restyled every feed
+the user had opened, 15–25 ms per press and per release.
+
 ### Feeds (`ui/feed.rs`, `ui/card.rs`)
 
 `FeedView` is a `GtkGridView`, or a `GtkListView` for compact lists, over a
