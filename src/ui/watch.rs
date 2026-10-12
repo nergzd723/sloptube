@@ -95,42 +95,6 @@ glib::wrapper! {
         @implements gtk::Accessible, gtk::Buildable, gtk::ConstraintTarget;
 }
 
-/// GtkLabel's own gestures claim every touch press on a label with links or a
-/// selectable one, and claiming cancels the scrolled window's touch drag, so the
-/// details couldn't be touch-scrolled from such a label. Keep touch away from the
-/// label's gestures and report taps (in label coordinates) instead; mouse and pen
-/// input still reach the label as usual.
-fn route_label_touch(label: &gtk::Label, on_tap: impl Fn(&gtk::Label, f64, f64) + 'static) {
-    use gtk::gdk::EventType;
-    let start = std::rc::Rc::new(Cell::new(None::<(f64, f64)>));
-    let legacy = gtk::EventControllerLegacy::new();
-    legacy.set_propagation_phase(gtk::PropagationPhase::Capture);
-    legacy.connect_event(move |c, ev| {
-        match ev.event_type() {
-            EventType::TouchBegin => start.set(ev.position()),
-            EventType::TouchUpdate => {}
-            EventType::TouchCancel => start.set(None),
-            EventType::TouchEnd => {
-                if let (Some((x0, y0)), Some((x, y))) = (start.take(), ev.position()) {
-                    let label = c.widget().and_downcast::<gtk::Label>().unwrap();
-                    if (x - x0).hypot(y - y0) < 10.0 {
-                        // Event positions are in surface coordinates.
-                        let native = label.native().unwrap();
-                        let (sx, sy) = native.surface_transform();
-                        let p = gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32);
-                        if let Some(p) = native.compute_point(&label, &p) {
-                            on_tap(&label, p.x() as f64, p.y() as f64);
-                        }
-                    }
-                }
-            }
-            _ => return glib::Propagation::Proceed,
-        }
-        glib::Propagation::Stop
-    });
-    label.add_controller(legacy);
-}
-
 fn pill_button(icon: &str, label: Option<&gtk::Label>, tooltip: &str) -> gtk::Button {
     let b = gtk::Button::new();
     let content = gtk::Box::new(gtk::Orientation::Horizontal, 6);
@@ -186,7 +150,7 @@ impl WatchView {
         imp.title.set_xalign(0.0);
         imp.title.set_selectable(true);
         imp.title.add_css_class("watch-title");
-        route_label_touch(&imp.title, |_, _, _| {});
+        super::route_label_touch(&imp.title, |_, _, _| {});
         d.append(&imp.title);
 
         imp.meta.set_xalign(0.0);
@@ -340,7 +304,7 @@ impl WatchView {
         imp.description.set_xalign(0.0);
         imp.description.set_use_markup(true);
         imp.description.connect_activate_link(|l, uri| super::activate_link(l, uri));
-        route_label_touch(
+        super::route_label_touch(
             &imp.description,
             glib::clone!(
                 #[weak(rename_to = view)]
@@ -671,19 +635,10 @@ impl WatchView {
 
     /// A touch tap on the description: follow the link under it, else expand.
     fn description_tapped(&self, label: &gtk::Label, x: f64, y: f64) {
-        let (ox, oy) = label.layout_offsets();
-        let scale = gtk::pango::SCALE as f64;
-        let (inside, index, _) = label
-            .layout()
-            .xy_to_index(((x - ox as f64) * scale) as i32, ((y - oy as f64) * scale) as i32);
-        if inside {
-            // The label's text is the description's plain text, so byte indices match.
-            if let Some(d) = self.playback().details() {
-                let index = index as usize;
-                if let Some(link) = d.description.links.iter().find(|l| l.start <= index && index < l.end) {
-                    super::activate_link(label, &super::link_uri(&link.target));
-                    return;
-                }
+        if let Some(d) = self.playback().details() {
+            if let Some(link) = super::link_at(label, &d.description, x, y) {
+                super::activate_link(label, &super::link_uri(&link.target));
+                return;
             }
         }
         if !self.imp().description_expanded.get() {

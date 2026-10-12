@@ -21,7 +21,7 @@ pub mod window;
 use adw::prelude::*;
 use gtk::{gio, glib};
 
-use crate::api::{LinkTarget, RichText, VideoItem};
+use crate::api::{LinkTarget, RichText, TextLink, VideoItem};
 
 /// Where a click should take the user.
 #[derive(Debug, Clone)]
@@ -235,6 +235,55 @@ pub fn nav_for_youtube_url(url: &str) -> Option<Nav> {
 }
 
 /// A label with rich text that routes link clicks into the app.
+/// GtkLabel's own gestures claim every touch press on a label with links or a
+/// selectable one, and claiming cancels the scrolled window's touch drag, so the
+/// details couldn't be touch-scrolled from such a label. Keep touch away from the
+/// label's gestures and report taps (in label coordinates) instead; mouse and pen
+/// input still reach the label as usual. A tap that only stopped a gliding list
+/// isn't reported.
+pub fn route_label_touch(label: &gtk::Label, on_tap: impl Fn(&gtk::Label, f64, f64) + 'static) {
+    use gtk::gdk::EventType;
+    let start = std::rc::Rc::new(std::cell::Cell::new(None::<(f64, f64)>));
+    let legacy = gtk::EventControllerLegacy::new();
+    legacy.set_propagation_phase(gtk::PropagationPhase::Capture);
+    legacy.connect_event(move |c, ev| {
+        match ev.event_type() {
+            EventType::TouchBegin => start.set(ev.position()),
+            EventType::TouchUpdate => {}
+            EventType::TouchCancel => start.set(None),
+            EventType::TouchEnd => {
+                if let (Some((x0, y0)), Some((x, y))) = (start.take(), ev.position()) {
+                    let label = c.widget().and_downcast::<gtk::Label>().unwrap();
+                    if (x - x0).hypot(y - y0) < 10.0 && !press_stopped_scrolling(&label) {
+                        // Event positions are in surface coordinates.
+                        let native = label.native().unwrap();
+                        let (sx, sy) = native.surface_transform();
+                        let p = gtk::graphene::Point::new((x - sx) as f32, (y - sy) as f32);
+                        if let Some(p) = native.compute_point(&label, &p) {
+                            on_tap(&label, p.x() as f64, p.y() as f64);
+                        }
+                    }
+                }
+            }
+            _ => return glib::Propagation::Proceed,
+        }
+        glib::Propagation::Stop
+    });
+    label.add_controller(legacy);
+}
+
+/// The link of `rt` at (`x`, `y`) in `label`, which shows `rt` as its text.
+pub fn link_at<'a>(label: &gtk::Label, rt: &'a RichText, x: f64, y: f64) -> Option<&'a TextLink> {
+    let (ox, oy) = label.layout_offsets();
+    let scale = gtk::pango::SCALE as f64;
+    let (inside, index, _) = label
+        .layout()
+        .xy_to_index(((x - ox as f64) * scale) as i32, ((y - oy as f64) * scale) as i32);
+    // The label's text is `rt.text` (markup only adds the links), so byte indices match.
+    let index = index as usize;
+    inside.then(|| rt.links.iter().find(|l| l.start <= index && index < l.end)).flatten()
+}
+
 pub fn rich_label(rt: &RichText) -> gtk::Label {
     let label = gtk::Label::builder()
         .wrap(true)
@@ -245,6 +294,12 @@ pub fn rich_label(rt: &RichText) -> gtk::Label {
         .build();
     label.set_markup(&rich_markup(rt));
     label.connect_activate_link(|label, uri| activate_link(label, uri));
+    let rt = rt.clone();
+    route_label_touch(&label, move |label, x, y| {
+        if let Some(link) = link_at(label, &rt, x, y) {
+            activate_link(label, &link_uri(&link.target));
+        }
+    });
     label
 }
 
