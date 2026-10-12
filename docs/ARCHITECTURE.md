@@ -67,7 +67,7 @@ A video goes through these steps:
 | `src/player/dash.rs` | DASH manifests for MP4 streams. |
 | `src/player/mod.rs` | The GStreamer player: pipeline, control thread, loading, seeking, stats. |
 | `src/playback.rs` | What is playing: metadata, stream selection, queue and autoplay, retries, resume positions, watch history. |
-| `src/image.rs` | Image download, decoding at display size, and the texture cache. |
+| `src/image.rs` | Image download, decoding at display size (WebP in-process), and the texture and file caches. |
 | `src/downloads.rs` | Downloads through the yt-dlp CLI and their index. |
 | `src/mpris.rs` | MPRIS service. |
 | `src/diagnose.rs`, `src/selftest.rs` | `--diagnose` and `--selftest`. |
@@ -472,13 +472,29 @@ made the bar about 300 px tall instead of 68 px.
 
 ### Images (`image.rs`)
 
-Images are downloaded on the tokio runtime and decoded with a gdk-pixbuf
-`PixbufLoader` at the size they are shown, rounded up to a bucket (48, 96, 176,
-256, 360, 480, 720 or 1280 px wide, otherwise 1920). JPEG decoding can scale
-while decoding, so a thumbnail costs a few hundred KB instead of several MB.
-Textures are cached up to 40 MB, evicting the least recently used. Together with
-loading Explore only when it is shown, this brought idle memory from about
-640 MB to about 270 MB.
+Images are downloaded on the tokio runtime and decoded on a worker thread at
+the size they are shown, rounded up to a bucket (48, 96, 176, 256, 360, 480, 720
+or 1280 px wide, otherwise 1920), so a thumbnail costs a few hundred KB instead
+of several MB.
+
+- Most thumbnails are WebP, whatever their URL ends in (the `sqp` parameter
+  picks the encoding). They are decoded with `image-webp`, because gdk-pixbuf
+  only reads WebP with an extra loader: Homebrew's has none, so thumbnails were
+  blank on macOS, and newer Linux systems route it through glycin's sandboxed
+  loader processes. JPEG avatars and anything else go through a gdk-pixbuf
+  `PixbufLoader`, which scales JPEGs while decoding.
+- Requests go at most six at a time per host, in the order cards ask for them.
+  When a page's 30 thumbnails were requested at once, each waited ~600 ms for
+  YouTube's image server instead of ~60 ms on its own, so the whole screen
+  appeared at once and late; this way the top rows come first. A request that
+  no widget still wants when its turn comes is dropped.
+- A download that fails with a network error, a timeout (8 s) or a server
+  error is tried once more.
+- Textures are cached up to 40 MB (counted at 4 bytes per pixel) and the
+  downloaded files up to 16 MB, both evicting the least recently used, so a
+  thumbnail whose texture was evicted is decoded again rather than downloaded.
+  Together with loading Explore only when it is shown, the texture cache
+  brought idle memory from about 640 MB to about 270 MB.
 
 ### Styling
 
