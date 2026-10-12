@@ -252,6 +252,56 @@ pub fn spawn<F: std::future::Future<Output = ()> + 'static>(f: F) {
     glib::spawn_future_local(f);
 }
 
+const LAST_MOVE_KEY: &str = "sloptube-last-move";
+const PRESS_STOPPED_KEY: &str = "sloptube-press-stopped";
+
+/// Note whether each press on `scrolled` lands while it is still moving (gliding
+/// after a fling), for [`press_stopped_scrolling`].
+pub fn track_scrolling(scrolled: &gtk::ScrolledWindow) {
+    for adj in [scrolled.hadjustment(), scrolled.vadjustment()] {
+        let scrolled = scrolled.downgrade();
+        adj.connect_value_changed(move |_| {
+            if let Some(s) = scrolled.upgrade() {
+                // SAFETY: the key is only ever used with `Instant`.
+                unsafe { s.set_data(LAST_MOVE_KEY, std::time::Instant::now()) };
+            }
+        });
+    }
+    let legacy = gtk::EventControllerLegacy::new();
+    legacy.set_propagation_phase(gtk::PropagationPhase::Capture);
+    legacy.connect_event(|c, ev| {
+        use gtk::gdk::EventType;
+        if matches!(ev.event_type(), EventType::ButtonPress | EventType::TouchBegin) {
+            if let Some(s) = c.widget() {
+                // SAFETY: the keys are only ever used with `Instant` and `bool`.
+                unsafe {
+                    let moving = s
+                        .data::<std::time::Instant>(LAST_MOVE_KEY)
+                        .is_some_and(|t| t.as_ref().elapsed() < std::time::Duration::from_millis(100));
+                    s.set_data(PRESS_STOPPED_KEY, moving);
+                }
+            }
+        }
+        glib::Propagation::Proceed
+    });
+    scrolled.add_controller(legacy);
+}
+
+/// Whether the current press landed on a list (`widget` or one around it) that
+/// was still moving. Such a tap only stops the list (as on phones); it shouldn't
+/// also open whatever slid under the finger.
+pub fn press_stopped_scrolling(widget: &impl IsA<gtk::Widget>) -> bool {
+    let mut w = Some(widget.as_ref().clone());
+    while let Some(x) = w {
+        // SAFETY: see `track_scrolling`.
+        if unsafe { x.data::<bool>(PRESS_STOPPED_KEY) }.is_some_and(|b| unsafe { *b.as_ref() }) {
+            return true;
+        }
+        w = x.parent();
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -126,6 +126,7 @@ impl FeedView {
             grid.upcast()
         };
         imp.scrolled.set_child(Some(&view));
+        super::track_scrolling(&imp.scrolled);
         imp.scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.scrolled.set_vexpand(true);
         // Infinite scroll: fetch the next page when within ~2 screens of the end,
@@ -415,6 +416,9 @@ impl FeedView {
 }
 
 fn activate(view: &gtk::Widget, pos: u32) {
+    if super::press_stopped_scrolling(view) {
+        return;
+    }
     let model = if let Some(g) = view.downcast_ref::<gtk::GridView>() {
         g.model()
     } else {

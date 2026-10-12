@@ -397,6 +397,7 @@ impl WatchView {
             .max_content_height(320)
             .propagate_natural_height(true)
             .build();
+        super::track_scrolling(&queue_scroll);
         imp.queue_box.append(&queue_scroll);
         imp.queue_box.set_visible(false);
         d.append(&imp.queue_box);
@@ -436,6 +437,7 @@ impl WatchView {
 
         // Full width, left-aligned under the player (no centring clamp).
         imp.details_scroll.set_child(Some(d));
+        super::track_scrolling(&imp.details_scroll);
         imp.details_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.details_scroll.set_vexpand(true);
         imp.details_scroll.vadjustment().connect_value_changed(glib::clone!(
@@ -466,6 +468,7 @@ impl WatchView {
         imp.side_box.set_spacing(12);
         imp.side_box.add_css_class("side-column");
         imp.side_scroll.set_child(Some(&imp.side_box));
+        super::track_scrolling(&imp.side_scroll);
         imp.side_scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.side_scroll.set_size_request(400, -1);
         // The cards' text boxes hexpand, which would otherwise propagate up through

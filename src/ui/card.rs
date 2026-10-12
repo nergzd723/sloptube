@@ -181,12 +181,18 @@ impl ItemCard {
             imp.avatar.set_valign(gtk::Align::Start);
             imp.avatar.set_visible(style.show_avatar);
             imp.avatar.set_cursor_from_name(Some("pointer"));
+            // Act on release: claiming the press would take it from the scrolled
+            // window, so a swipe starting on an avatar opened the channel instead
+            // of scrolling.
             let click = gtk::GestureClick::new();
-            click.connect_pressed(glib::clone!(
+            click.connect_released(glib::clone!(
                 #[weak(rename_to = card)]
                 self,
                 move |g, _, _, _| {
                     g.set_state(gtk::EventSequenceState::Claimed);
+                    if super::press_stopped_scrolling(&card) {
+                        return;
+                    }
                     if let Some(id) = card.channel_id() {
                         navigate(&card, Nav::Channel(id));
                     }
@@ -390,7 +396,9 @@ impl ItemCard {
             self,
             move |g, _, _, _| {
                 g.set_state(gtk::EventSequenceState::Claimed);
-                card.activate_item();
+                if !super::press_stopped_scrolling(&card) {
+                    card.activate_item();
+                }
             }
         ));
         self.add_controller(click);

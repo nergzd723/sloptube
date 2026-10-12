@@ -395,7 +395,8 @@ the user had opened, 15–25 ms per press and per release.
 ### Feeds (`ui/feed.rs`, `ui/card.rs`)
 
 `FeedView` is a `GtkGridView`, or a `GtkListView` for compact lists, over a
-`gio::ListStore` of `BoxedAnyObject(Item)`, so only visible cards exist. It is
+`gio::ListStore` of `BoxedAnyObject(Item)`, so only cards near the visible
+area exist (`GtkGridView` keeps up to `max-columns` × 30 of them). It is
 given a `Loader`, a closure that returns a page for an optional continuation
 token, and loads the next page when the view is scrolled near the end. That
 check only runs when the view is mapped and has a real size: without that guard
@@ -404,6 +405,12 @@ row, an empty state and an error state with a retry button are built in.
 
 Cards come in grid and compact styles and have a menu: Save to Watch later,
 Play as audio, Download, Go to channel, Copy link.
+
+Cards and their channel avatars act on release, so a touch swipe that starts on
+one still scrolls. A press that lands while a list is still gliding after a
+fling only stops it, as on phones: `track_scrolling` notes whether each press
+on a scrolled window landed while it was moving, and the click handlers check
+`press_stopped_scrolling` (both in `ui/mod.rs`) before opening anything.
 
 ### Watch page and player
 

@@ -106,6 +106,7 @@ impl CommentsPage {
         content.append(&imp.spinner);
         let clamp = adw::Clamp::builder().maximum_size(900).child(&content).build();
         imp.scroll.set_child(Some(&clamp));
+        super::track_scrolling(&imp.scroll);
         imp.scroll.set_vexpand(true);
         imp.scroll.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.scroll.vadjustment().connect_value_changed(glib::clone!(
@@ -199,6 +200,9 @@ impl CommentsPage {
                 #[weak(rename_to = page)]
                 self,
                 move |_, _, _, _| {
+                    if super::press_stopped_scrolling(&page.imp().scroll) {
+                        return;
+                    }
                     navigate(&page, Nav::Channel(id.clone()));
                     let _ = page.activate_action("win.collapse-player", None);
                 }

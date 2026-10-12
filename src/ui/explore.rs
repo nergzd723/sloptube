@@ -56,6 +56,7 @@ pub fn shelves_widget(page: &FeedPage) -> gtk::Box {
             .hscrollbar_policy(gtk::PolicyType::Automatic)
             .vscrollbar_policy(gtk::PolicyType::Never)
             .build();
+        super::track_scrolling(&scroll);
         section.append(&scroll);
         b.append(&section);
     }
@@ -159,6 +160,7 @@ pub fn explore_page(win: &super::window::Window) -> adw::NavigationPage {
         .hscrollbar_policy(gtk::PolicyType::Never)
         .vexpand(true)
         .build();
+    super::track_scrolling(&scroll);
     let tv = adw::ToolbarView::new();
     tv.add_top_bar(&super::pages::tab_header(win));
     tv.set_content(Some(&scroll));
