@@ -28,10 +28,11 @@ pub fn thumb_url(thumbs: &[Thumbnail], width: u32) -> Option<String> {
             return Some(format!("{}=w{width}-h{height}{crop}-l90-rj", &url[..pos]));
         }
     // Small video thumbnails: the 320×180 one, not the letterboxed 480×360.
-    if width <= 320 && url.contains("i.ytimg.com/vi/") {
-        if let Some(id) = url.split("/vi/").nth(1).and_then(|r| r.split('/').next()) {
-            return Some(format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg"));
-        }
+    if width <= 320
+        && url.contains("i.ytimg.com/vi/")
+        && let Some(id) = url.split("/vi/").nth(1).and_then(|r| r.split('/').next())
+    {
+        return Some(format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg"));
     }
     let mut sorted: Vec<&Thumbnail> = thumbs.iter().collect();
     sorted.sort_by_key(|t| t.width);

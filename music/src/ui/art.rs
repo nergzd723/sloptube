@@ -305,10 +305,10 @@ mod lazy {
         while let Some(a) = ancestor {
             if let Some(sw) = a.downcast_ref::<gtk::ScrolledWindow>() {
                 watch(sw);
-                if let Some(r) = sw.compute_bounds(root) {
-                    if b.intersection(&grown(r)).is_none() {
-                        return false;
-                    }
+                if let Some(r) = sw.compute_bounds(root)
+                    && b.intersection(&grown(r)).is_none()
+                {
+                    return false;
                 }
             }
             ancestor = a.parent();
