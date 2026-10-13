@@ -160,6 +160,22 @@ def extract(req):
     }
 
 
+def _is_network_error(exc):
+    """Whether a DownloadError comes from not reaching the server at all."""
+    try:
+        from yt_dlp.networking.exceptions import TransportError
+    except ImportError:  # pragma: no cover - older yt-dlp
+        return False
+    e = (getattr(exc, "exc_info", None) or (None, None, None))[1]
+    seen = set()
+    while e is not None and id(e) not in seen:
+        if isinstance(e, TransportError):
+            return True
+        seen.add(id(e))
+        e = getattr(e, "cause", None) or e.__cause__ or e.__context__
+    return False
+
+
 def handle(line):
     try:
         req = json.loads(line)
@@ -177,7 +193,7 @@ def handle(line):
         msg = str(exc)
         if msg.startswith("ERROR: "):
             msg = msg[7:]
-        send({"id": rid, "error": msg})
+        send({"id": rid, "error": msg, "network": _is_network_error(exc)})
     except Exception as exc:  # noqa: BLE001
         send({"id": rid, "error": f"{type(exc).__name__}: {exc}"})
 

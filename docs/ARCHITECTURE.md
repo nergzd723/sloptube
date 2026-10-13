@@ -201,7 +201,9 @@ video, `extractor.rs` keeps one Python process with yt-dlp imported:
 - **Protocol**: one JSON object per line in each direction. Requests are
   `{"id": N, "op": "extract", "url": "...", "cookiefile": "..."}` (or
   `"op": "version"`); answers are `{"id": N, "ok": {...}}` or
-  `{"id": N, "error": "..."}`. The helper handles up to four requests at once
+  `{"id": N, "error": "...", "network": bool}`, where `network` means yt-dlp
+  could not reach YouTube at all (a `TransportError`; the app turns it into
+  `extractor::NetworkError`). The helper handles up to four requests at once
   and the app matches answers to requests by `id`.
 - The answer is a trimmed info dict: `id`, `title`, `duration`, `is_live`,
   `live_status`, `formats` (selected keys only), `chapters`, `captions`,
@@ -339,10 +341,16 @@ when they change.
   position.
 - **Queue**: a playlist from the watch page data, or with autoplay the first
   related video. Shift+N/P and MPRIS Next/Previous move through it.
-- **Errors**: YouTube URLs expire and CDN nodes sometimes misbehave, for
-  example by ignoring range requests. Errors whose text suggests that (403, 410,
-  `Could not read`, timeouts, ...) trigger a fresh extraction and reload at the
-  same position, at most twice; the count resets once playback runs.
+- **Errors**: YouTube URLs expire, CDN nodes sometimes misbehave (for example
+  by ignoring range requests) and connections drop. GStreamer resource errors
+  and stream failures ("Internal data stream error") count as transient: they
+  trigger a fresh extraction and reload at the same position, at most twice;
+  the count resets once playback runs. Offline (per `gio::NetworkMonitor`), or
+  once those retries fail, the error stays up and playback reloads by itself
+  when the network comes back: on `network-changed`, or when a TCP probe to
+  youtube.com (every 10 s while waiting) connects. While an error is shown,
+  Retry sits above the player controls, the play/seek buttons are hidden, and
+  play/pause (button, Space/K, mini player, MPRIS) retries instead.
 - **Resume positions** go to `~/.local/share/sloptube/positions.json` every
   10 seconds, for videos longer than 2 minutes, between 15 seconds in and
   20 seconds before the end; the 400 most recent are kept.

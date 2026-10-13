@@ -47,13 +47,13 @@ pub async fn setup(playback: Playback, raise: impl Fn() + 'static, quit: impl Fn
 
     mp.connect_play_pause(glib::clone!(
         #[weak]
-        player,
-        move |_| player.toggle()
+        playback,
+        move |_| playback.toggle()
     ));
     mp.connect_play(glib::clone!(
         #[weak]
-        player,
-        move |_| player.play()
+        playback,
+        move |_| playback.play()
     ));
     mp.connect_pause(glib::clone!(
         #[weak]

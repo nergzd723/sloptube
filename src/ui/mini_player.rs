@@ -109,8 +109,8 @@ impl MiniPlayer {
         imp.play.set_valign(gtk::Align::Center);
         imp.play.connect_clicked(glib::clone!(
             #[weak]
-            player,
-            move |_| player.toggle()
+            playback,
+            move |_| playback.toggle()
         ));
         row.append(&imp.play);
         let next = gtk::Button::from_icon_name("media-skip-forward-symbolic");

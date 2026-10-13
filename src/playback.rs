@@ -5,8 +5,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
-use gtk::glib;
 use gtk::glib::subclass::Signal;
+use gtk::{gio, glib};
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
@@ -125,6 +125,9 @@ mod imp {
         pub tracking: RefCell<Option<Tracking>>,
         pub last_saved: Cell<f64>,
         pub retries: Cell<u32>,
+        /// The shown error looks network-related: load again once the network is back.
+        pub retry_when_online: Cell<bool>,
+        pub reconnect_probe: RefCell<Option<glib::SourceId>>,
         pub played: RefCell<Vec<String>>,
         pub local_file: RefCell<Option<String>>,
     }
@@ -164,7 +167,16 @@ mod imp {
             self.player.connect_error(glib::clone!(
                 #[weak]
                 obj,
-                move |_, msg| obj.on_error(msg)
+                move |_, msg, transient| obj.on_error(msg, transient)
+            ));
+            gio::NetworkMonitor::default().connect_network_changed(glib::clone!(
+                #[weak]
+                obj,
+                move |_, available| {
+                    if available {
+                        obj.on_network_available();
+                    }
+                }
             ));
             self.player.connect_position_notify(glib::clone!(
                 #[weak]
@@ -274,8 +286,74 @@ impl Playback {
     }
 
     fn set_error(&self, e: &str) {
+        if e.is_empty() {
+            self.imp().retry_when_online.set(false);
+        }
         self.imp().error.replace(e.to_owned());
         self.notify_error();
+    }
+
+    /// Show a failure. `network` marks failures that loading again can fix once
+    /// the network is back.
+    fn fail(&self, msg: &str, network: bool) {
+        let offline = network && !gio::NetworkMonitor::default().is_network_available();
+        self.set_error(if offline {
+            "No internet connection. Playback resumes when you're back online."
+        } else {
+            msg
+        });
+        self.imp().retry_when_online.set(network);
+        if network {
+            self.probe_connection();
+        }
+    }
+
+    /// While waiting for the network, try reaching YouTube every few seconds:
+    /// not every reconnection comes with a network-changed signal (e.g. the
+    /// Wi-Fi stays associated while the internet behind it drops).
+    fn probe_connection(&self) {
+        let imp = self.imp();
+        if imp.reconnect_probe.borrow().is_some() {
+            return;
+        }
+        let id = glib::timeout_add_seconds_local(
+            10,
+            glib::clone!(
+                #[weak(rename_to = this)]
+                self,
+                #[upgrade_or]
+                glib::ControlFlow::Break,
+                move || {
+                    if !this.imp().retry_when_online.get() || !this.failed() {
+                        this.imp().reconnect_probe.take();
+                        return glib::ControlFlow::Break;
+                    }
+                    let client = gio::SocketClient::new();
+                    client.set_timeout(5);
+                    client.connect_to_host_async(
+                        "www.youtube.com",
+                        443,
+                        None::<&gio::Cancellable>,
+                        glib::clone!(
+                            #[weak]
+                            this,
+                            move |res| {
+                                if res.is_ok() {
+                                    this.on_network_available();
+                                }
+                            }
+                        ),
+                    );
+                    glib::ControlFlow::Continue
+                }
+            ),
+        );
+        imp.reconnect_probe.replace(Some(id));
+    }
+
+    /// Showing an error instead of playing.
+    pub fn failed(&self) -> bool {
+        !self.imp().error.borrow().is_empty()
     }
 
     fn set_loading(&self, l: bool) {
@@ -327,28 +405,7 @@ impl Playback {
         }
         self.emit_by_name::<()>("video-changed", &[]);
 
-        // Metadata, comments, related videos
-        let id = item.id.clone();
-        let pl = playlist.clone();
-        let this = self.downgrade();
-        glib::spawn_future_local(async move {
-            let id2 = id.clone();
-            let res = runtime::run(async move { api::client().video(&id2, pl.as_deref()).await }).await;
-            let Some(this) = this.upgrade() else { return };
-            if this.imp().generation.get() != ticket {
-                return;
-            }
-            match res {
-                Ok(d) => this.apply_details(d),
-                Err(e) => {
-                    log::warn!("details for {id} failed: {e:#}");
-                    if this.imp().info.borrow().is_none() && !this.imp().loading_streams.get() {
-                        this.set_error(&e.to_string());
-                    }
-                }
-            }
-        });
-
+        self.load_details(playlist);
         let start = start.or_else(|| {
             settings::get()
                 .resume_playback
@@ -402,6 +459,30 @@ impl Playback {
             if let (Some(this), Ok(d)) = (this.upgrade(), res) {
                 if this.imp().generation.get() == ticket {
                     this.apply_details(d);
+                }
+            }
+        });
+    }
+
+    /// Metadata, comments, related videos.
+    fn load_details(&self, playlist: Option<String>) {
+        let Some(id) = self.current_item().map(|i| i.id) else { return };
+        let ticket = self.imp().generation.get();
+        let this = self.downgrade();
+        glib::spawn_future_local(async move {
+            let id2 = id.clone();
+            let res = runtime::run(async move { api::client().video(&id2, playlist.as_deref()).await }).await;
+            let Some(this) = this.upgrade() else { return };
+            if this.imp().generation.get() != ticket {
+                return;
+            }
+            match res {
+                Ok(d) => this.apply_details(d),
+                Err(e) => {
+                    log::warn!("details for {id} failed: {e:#}");
+                    if this.imp().info.borrow().is_none() && !this.imp().loading_streams.get() && !this.failed() {
+                        this.fail(&e.to_string(), true);
+                    }
                 }
             }
         });
@@ -476,7 +557,11 @@ impl Playback {
                 }
                 Err(e) => {
                     log::warn!("stream extraction for {id} failed: {e:#}");
-                    this.set_error(&e.to_string());
+                    if e.downcast_ref::<extractor::NetworkError>().is_some() {
+                        this.fail("Can't reach YouTube. Check your connection.", true);
+                    } else {
+                        this.fail(&e.to_string(), false);
+                    }
                 }
             }
         });
@@ -488,10 +573,12 @@ impl Playback {
         let sel = match formats::select(&info, &self.support(), &self.prefs(), imp.quality.get()) {
             Ok(s) => s,
             Err(e) => {
-                self.set_error(&e.to_string());
+                self.fail(&e.to_string(), false);
                 return;
             }
         };
+        // Whatever failed before, this is a fresh start.
+        self.set_error("");
         let (source, headers) = match &sel {
             Selection::Separate { video, audio } => {
                 // MP4 streams can only seek through a DASH manifest (range requests via
@@ -568,26 +655,54 @@ impl Playback {
         }
     }
 
+    /// Load the current video again (fresh stream URLs), from where it stopped.
     pub fn retry(&self) {
+        self.retry_from(self.imp().player.position());
+    }
+
+    fn retry_from(&self, pos: f64) {
         let imp = self.imp();
         self.set_error("");
         if let Some(uri) = imp.local_file.borrow().clone() {
             imp.player.load(LoadRequest {
                 source: Source::Single { uri },
                 headers: Vec::new(),
-                start: Some(imp.player.position()),
+                start: Some(pos),
                 autoplay: true,
             });
             return;
         }
-        if let Some(item) = self.current_item() {
-            extractor::extractor().invalidate(&item.id);
+        let Some(item) = self.current_item() else { return };
+        extractor::extractor().invalidate(&item.id);
+        if imp.details.borrow().is_none() {
+            let playlist = imp.queue.borrow().as_ref().map(|q| q.playlist_id.clone());
+            self.load_details(playlist);
         }
-        let pos = imp.player.position();
         self.load_streams(Some(pos), true);
     }
 
+    /// Play/pause; after a failure, tries loading again instead.
+    pub fn toggle(&self) {
+        if self.failed() {
+            self.retry();
+        } else {
+            self.imp().player.toggle();
+        }
+    }
+
+    pub fn play(&self) {
+        if self.failed() {
+            self.retry();
+        } else {
+            self.imp().player.play();
+        }
+    }
+
     pub fn seek(&self, t: f64) {
+        if self.failed() {
+            self.retry_from(t);
+            return;
+        }
         self.imp().player.seek(t, true);
         self.imp().player.play();
     }
@@ -605,6 +720,7 @@ impl Playback {
         imp.active.set(false);
         self.notify_active();
         self.set_loading(false);
+        self.set_error("");
         self.emit_by_name::<()>("video-changed", &[]);
     }
 
@@ -675,21 +791,30 @@ impl Playback {
         }
     }
 
-    fn on_error(&self, msg: String) {
+    fn on_error(&self, msg: String, transient: bool) {
         let imp = self.imp();
-        // Expired URLs and flaky CDN responses (e.g. a server ignoring range
-        // requests) usually go away with fresh URLs from a new extraction.
-        let retryable = ["403", "Forbidden", "410", "download", "Could not read", "resource", "timed out", "Timeout"]
-            .iter()
-            .any(|needle| msg.contains(needle));
-        if retryable && imp.retries.get() < 2 && imp.local_file.borrow().is_none() {
+        let first_line = msg.lines().next().unwrap_or("Playback failed").to_owned();
+        let network = transient && imp.local_file.borrow().is_none();
+        // Expired URLs, flaky CDN responses (e.g. a server ignoring range
+        // requests) and dropped connections usually go away with fresh URLs
+        // from a new extraction. Offline, wait for the network instead.
+        let online = gio::NetworkMonitor::default().is_network_available();
+        if network && online && imp.retries.get() < 2 {
             imp.retries.set(imp.retries.get() + 1);
-            log::info!("stream failed ({}), extracting again", msg.lines().next().unwrap_or_default());
+            log::info!("stream failed ({first_line}), extracting again");
             self.retry();
             return;
         }
-        let first_line = msg.lines().next().unwrap_or("Playback failed").to_owned();
-        self.set_error(&first_line);
+        self.fail(&first_line, network);
+    }
+
+    fn on_network_available(&self) {
+        let imp = self.imp();
+        if imp.retry_when_online.get() && self.failed() && imp.active.get() {
+            log::info!("network is back, loading {} again", imp.video_id.borrow());
+            imp.retries.set(0);
+            self.retry();
+        }
     }
 
     // -----------------------------------------------------------------------

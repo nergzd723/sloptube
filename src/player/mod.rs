@@ -197,7 +197,10 @@ mod imp {
             static SIGNALS: std::sync::OnceLock<Vec<Signal>> = std::sync::OnceLock::new();
             SIGNALS.get_or_init(|| {
                 vec![
-                    Signal::builder("error").param_types([String::static_type()]).build(),
+                    // (message, transient: loading again may fix it)
+                    Signal::builder("error")
+                        .param_types([String::static_type(), bool::static_type()])
+                        .build(),
                     Signal::builder("eos").build(),
                     Signal::builder("seeked").build(),
                 ]
@@ -518,7 +521,12 @@ mod imp {
                     self.set_play_state(PlayState::Error);
                     let detail = err.debug().map(|d| d.to_string()).unwrap_or_default();
                     let message = format!("{}\n{detail}", err.error());
-                    self.obj().emit_by_name::<()>("error", &[&message]);
+                    // Network trouble shows up as resource errors from the HTTP
+                    // source or as "Internal data stream error" from the demuxer
+                    // it was feeding; both can go away by loading again.
+                    let e = err.error();
+                    let transient = e.is::<gst::ResourceError>() || e.matches(gst::StreamError::Failed);
+                    self.obj().emit_by_name::<()>("error", &[&message, &transient]);
                 }
                 MessageView::Warning(w) => {
                     let text = w.error().to_string();
@@ -695,7 +703,7 @@ impl Player {
     pub fn load(&self, req: LoadRequest) {
         let imp = self.imp();
         let Some(playbin) = imp.playbin() else {
-            self.emit_by_name::<()>("error", &[&"GStreamer is not available".to_string()]);
+            self.emit_by_name::<()>("error", &[&"GStreamer is not available".to_string(), &false]);
             return;
         };
         let generation = imp.load_gen.get() + 1;
@@ -763,8 +771,12 @@ impl Player {
                 }
                 Ok(Err(e)) => {
                     log::error!("cannot start playback: {e}");
-                    imp.set_play_state(PlayState::Error);
-                    obj.emit_by_name::<()>("error", &[&"Could not start playback".to_string()]);
+                    // The bus usually carries the actual error, which may already
+                    // have been reported (and retried).
+                    if imp.state.get() != PlayState::Error {
+                        imp.set_play_state(PlayState::Error);
+                        obj.emit_by_name::<()>("error", &[&"Could not start playback".to_string(), &true]);
+                    }
                 }
                 Err(_) => {}
             }
@@ -898,11 +910,13 @@ impl Player {
         st
     }
 
-    pub fn connect_error<F: Fn(&Self, String) + 'static>(&self, f: F) -> glib::SignalHandlerId {
+    /// `f(player, message, transient)`; transient errors may go away by loading again.
+    pub fn connect_error<F: Fn(&Self, String, bool) + 'static>(&self, f: F) -> glib::SignalHandlerId {
         self.connect_local("error", false, move |args| {
             let obj = args[0].get::<Self>().unwrap();
             let msg = args[1].get::<String>().unwrap_or_default();
-            f(&obj, msg);
+            let transient = args[2].get::<bool>().unwrap_or(false);
+            f(&obj, msg, transient);
             None
         })
     }

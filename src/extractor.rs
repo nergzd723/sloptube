@@ -148,7 +148,19 @@ pub struct StreamInfo {
     pub ranges: HashMap<String, Ranges>,
 }
 
-type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, String>>>>>;
+type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, HelperFailure>>>>>;
+
+/// Extraction failed because YouTube couldn't be reached at all.
+#[derive(Debug)]
+pub struct NetworkError(pub String);
+
+impl std::fmt::Display for NetworkError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for NetworkError {}
 
 struct Helper {
     stdin: ChildStdin,
@@ -236,7 +248,8 @@ impl Extractor {
                     *self.helper_broken.lock().unwrap() = true;
                     self.cli_extract(&url, cookiefile.as_deref()).await?
                 }
-                Err(HelperError::Failed(msg)) => bail!(msg),
+                Err(HelperError::Failed(f)) if f.network => return Err(NetworkError(f.message).into()),
+                Err(HelperError::Failed(f)) => bail!(f.message),
             }
         };
         let info: StreamInfo = serde_json::from_value(value).context("unexpected yt-dlp output")?;
@@ -301,11 +314,14 @@ impl Extractor {
                 if let Some(tx) = tx {
                     let res = match v.get("ok") {
                         Some(ok) => Ok(ok.clone()),
-                        None => Err(v
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .unwrap_or("unknown yt-dlp error")
-                            .to_owned()),
+                        None => Err(HelperFailure {
+                            message: v
+                                .get("error")
+                                .and_then(Value::as_str)
+                                .unwrap_or("unknown yt-dlp error")
+                                .to_owned(),
+                            network: v.get("network").and_then(Value::as_bool).unwrap_or(false),
+                        }),
                     };
                     let _ = tx.send(res);
                 }
@@ -313,7 +329,7 @@ impl Extractor {
             // Helper died: fail everything that's still waiting.
             let mut p = pending.lock().unwrap();
             for (_, tx) in p.drain() {
-                let _ = tx.send(Err("yt-dlp helper exited".into()));
+                let _ = tx.send(Err(HelperFailure::other("yt-dlp helper exited")));
             }
             drop(child);
         });
@@ -365,16 +381,16 @@ impl Extractor {
 
         match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
-            Ok(Ok(Err(msg))) => {
-                if msg == "yt-dlp helper exited" {
+            Ok(Ok(Err(f))) => {
+                if f.message == "yt-dlp helper exited" {
                     *self.helper.lock().await = None;
                 }
-                Err(HelperError::Failed(msg))
+                Err(HelperError::Failed(f))
             }
-            Ok(Err(_)) => Err(HelperError::Failed("yt-dlp helper went away".into())),
+            Ok(Err(_)) => Err(HelperError::Failed(HelperFailure::other("yt-dlp helper went away"))),
             Err(_) => {
                 self.pending.lock().unwrap().remove(&id);
-                Err(HelperError::Failed("yt-dlp took too long to respond".into()))
+                Err(HelperError::Failed(HelperFailure::other("yt-dlp took too long to respond")))
             }
         }
     }
@@ -425,5 +441,20 @@ impl Extractor {
 
 enum HelperError {
     Unavailable(anyhow::Error),
-    Failed(String),
+    Failed(HelperFailure),
+}
+
+struct HelperFailure {
+    message: String,
+    /// yt-dlp couldn't reach the server (see `NetworkError`).
+    network: bool,
+}
+
+impl HelperFailure {
+    fn other(message: &str) -> Self {
+        Self {
+            message: message.to_owned(),
+            network: false,
+        }
+    }
 }

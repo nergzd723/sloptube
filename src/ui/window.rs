@@ -540,7 +540,7 @@ impl Window {
             });
             controller.add_shortcut(gtk::Shortcut::new(gtk::ShortcutTrigger::parse_string(trigger), Some(action)));
         };
-        add("space|k|AudioPlay|AudioPause", |w| w.playback().player().toggle());
+        add("space|k|AudioPlay|AudioPause", |w| w.playback().toggle());
         add("j", |w| w.player_seek(-10.0));
         add("l", |w| w.player_seek(10.0));
         add("Left", |w| w.player_seek(-5.0));
@@ -638,7 +638,7 @@ impl Window {
         action("collapse-player", |w| w.collapse_player());
         action("expand-player", |w| w.expand_player());
         action("refresh", |w| w.refresh());
-        action("play-pause", |w| w.playback().player().toggle());
+        action("play-pause", |w| w.playback().toggle());
     }
 
     fn current_nav(&self) -> adw::NavigationView {

@@ -29,6 +29,7 @@ mod imp {
         pub error_box: gtk::Box,
         pub error_label: gtk::Label,
         pub controls: gtk::Revealer,
+        pub center: gtk::Box,
         pub title: gtk::Label,
         pub collapse_button: gtk::Button,
         pub play_button: gtk::Button,
@@ -142,6 +143,9 @@ impl PlayerView {
         imp.error_label.set_wrap(true);
         imp.error_label.set_justify(gtk::Justification::Center);
         imp.error_label.set_max_width_chars(48);
+        // Long messages (yt-dlp's) would cover the controls; the log has them in full.
+        imp.error_label.set_lines(4);
+        imp.error_label.set_ellipsize(gtk::pango::EllipsizeMode::End);
         let retry = gtk::Button::with_label("Retry");
         retry.add_css_class("pill");
         retry.set_halign(gtk::Align::Center);
@@ -154,7 +158,6 @@ impl PlayerView {
         imp.error_box.append(&imp.error_label);
         imp.error_box.append(&retry);
         imp.error_box.set_visible(false);
-        imp.overlay.add_overlay(&imp.error_box);
 
         // Controls
         let controls = gtk::Box::new(gtk::Orientation::Vertical, 0);
@@ -217,7 +220,8 @@ impl PlayerView {
         handle.set_child(Some(&top));
         controls.append(&handle);
 
-        let center = gtk::Box::new(gtk::Orientation::Horizontal, 32);
+        let center = &imp.center;
+        center.set_spacing(32);
         center.set_halign(gtk::Align::Center);
         center.set_valign(gtk::Align::Center);
         center.set_vexpand(true);
@@ -238,7 +242,7 @@ impl PlayerView {
             #[weak(rename_to = view)]
             self,
             move |_| {
-                view.playback().player().toggle();
+                view.playback().toggle();
                 view.schedule_hide();
             }
         ));
@@ -251,7 +255,11 @@ impl PlayerView {
         center.append(&rewind);
         center.append(&imp.play_button);
         center.append(&forward);
-        controls.append(&center);
+        // Keeps the bottom row down while the buttons are hidden (on errors).
+        let center_area = gtk::Box::new(gtk::Orientation::Vertical, 0);
+        center_area.set_vexpand(true);
+        center_area.append(center);
+        controls.append(&center_area);
 
         let bottom = gtk::Box::new(gtk::Orientation::Vertical, 0);
         bottom.add_css_class("player-bottom");
@@ -342,6 +350,8 @@ impl PlayerView {
         ));
         bottom.add_controller(motion_bottom);
         imp.overlay.add_overlay(&imp.controls);
+        // Above the controls, which would otherwise take the clicks meant for Retry.
+        imp.overlay.add_overlay(&imp.error_box);
 
         imp.feedback.add_css_class("seek-feedback");
         imp.feedback.set_halign(gtk::Align::Center);
@@ -434,7 +444,7 @@ impl PlayerView {
                 } else if x > width * 2.0 / 3.0 {
                     self.seek_by(10.0);
                 } else {
-                    self.playback().player().toggle();
+                    self.playback().toggle();
                 }
             } else {
                 let _ = self.activate_action("win.toggle-fullscreen", None);
@@ -460,7 +470,7 @@ impl PlayerView {
                             view.show_controls();
                         }
                     } else {
-                        view.playback().player().toggle();
+                        view.playback().toggle();
                         view.show_controls();
                     }
                 }
@@ -601,6 +611,8 @@ impl PlayerView {
         imp.spinner.set_visible(loading && !has_error);
         imp.error_box.set_visible(has_error);
         imp.error_label.set_text(&error);
+        // Play and seek can't do anything until it loads again; Retry is the way out.
+        imp.center.set_visible(!has_error);
         let show_poster = has_error
             || playback.audio_only()
             || playback.loading_streams()
@@ -616,7 +628,7 @@ impl PlayerView {
         });
         imp.play_button.set_visible(!loading || state == PlayState::Buffering && !playing);
         imp.next_button.set_visible(playback.has_next());
-        imp.scale.set_sensitive(!player.is_live() && player.duration() > 0.0);
+        imp.scale.set_sensitive(!has_error && !player.is_live() && player.duration() > 0.0);
         if !playing || state == PlayState::Ended {
             self.show_controls_persistent();
         } else {
