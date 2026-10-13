@@ -61,10 +61,10 @@ A video goes through these steps:
 | `src/player/decoders.rs` | Decoder discovery and hardware/software ranking. |
 | `src/player/formats.rs` | Stream selection and the quality menu. |
 | `src/player/dash.rs` | DASH manifests for MP4 streams. |
-| `src/player/mod.rs` | The GStreamer player: pipeline, control thread, loading, seeking, stats. |
+| `src/player/mod.rs` | SlopTube's settings for the shared player (`common::player`). |
 | `src/playback.rs` | What is playing: metadata, stream selection, queue and autoplay, retries, resume positions, watch history. |
 | `src/downloads.rs` | Downloads through the yt-dlp CLI and their index. |
-| `src/mpris.rs` | MPRIS service. |
+| `src/mpris.rs` | SlopTube's MPRIS player (on `common::mpris`). |
 | `src/diagnose.rs`, `src/selftest.rs` | `--diagnose` and `--selftest`. |
 | `src/ui/window.rs` | Main window: adaptive layout, tabs, sidebar, the watch sheet and mini player, player shortcuts. |
 | `src/ui/mod.rs` | `Nav` and `navigate`, rich-text markup and `sloptube:` links, URL routing, small helpers. |
@@ -94,6 +94,10 @@ A video goes through these steps:
 | `common/src/login.rs` | The sign-in dialog. |
 | `common/src/image.rs` | Image download, decoding at display size (WebP in-process), and the texture and file caches. |
 | `common/src/extractor.rs`, `ytdlp_helper.py` | Stream extraction through a resident yt-dlp process (one for both apps), with a CLI fallback and a cache. |
+| `common/src/player.rs` | The GStreamer player, for video or audio only: pipeline, control thread, loading, seeking, gapless hand-over, stats. |
+| `common/src/recovery.rs` | Retrying failed playback, and reloading once the network is back. |
+| `common/src/history.rs` | Reporting plays and time played to the YouTube history. |
+| `common/src/mpris.rs` | The MPRIS service, its player controls and published track. |
 | `music/` | SlopTube Music, a library crate in the workspace (see [SlopTube Music](#sloptube-music)). |
 
 ## Threads and processes
@@ -110,8 +114,9 @@ starts a GLib future with `glib::spawn_future_local`, runs the network part with
 again once it is back on the main thread. `runtime::spawn` is for fire-and-forget
 work.
 
-**GStreamer control thread** (`player/mod.rs`, `sloptube-gst`). Every pipeline
-state change and flushing seek runs here, queued in order through `ctl()` or
+**GStreamer control threads** (`common/src/player.rs`: `sloptube-gst` for
+videos, `stmusic-gst` for Music; one per player, so a slow video seek never
+holds up the music). Every pipeline state change and flushing seek runs here, queued in order through `ctl()` or
 `ctl_await()`. `gtk4paintablesink` sometimes needs the main thread itself, for
 example to query DMABuf formats while a decoder negotiates. If the main thread
 were blocked in `set_state` waiting for that decoder, both would wait forever.
@@ -127,8 +132,8 @@ process for both apps, while in use; see [Streams](#streams-yt-dlp).
 **Downloads** (`downloads.rs`) run the `yt-dlp` CLI, one `gio::Subprocess`
 each, and parse its progress lines on the main loop.
 
-**MPRIS** (`mpris.rs`, the `mpris-server` crate) runs on the main loop as
-`org.mpris.MediaPlayer2.io.github.nergzd.SlopTube`.
+**MPRIS** (`common/src/mpris.rs`, the `mpris-server` crate) runs on the main loop as
+`org.mpris.MediaPlayer2.io.github.nergzd.SlopTube` (and `...SlopTubeMusic`).
 
 ## Data: InnerTube
 
@@ -309,9 +314,11 @@ YouTube serves each quality as one file with a byte index: `sidx` for MP4,
   but `matroskademux` seeks fine over HTTP through the `Cues`. The video URL goes
   to playbin's `uri` and the audio URL to its `suburi`.
 
-### The player (`player/mod.rs`)
+### The player (`common/src/player.rs`)
 
-The pipeline is one `playbin3`:
+Both apps use this player; SlopTube's settings are in `player/mod.rs`, Music's
+in `music/src/player.rs` (audio only, 15 s / 1 MB of buffer, gapless). For
+videos the pipeline is one `playbin3`:
 
 - `video-sink` is `gtk4paintablesink`. With the default `static-sink` feature
   it is compiled in (`gst-plugin-gtk4`) and registered in `main.rs`. It accepts
@@ -329,7 +336,8 @@ The pipeline is one `playbin3`:
 **Loading.** `load()` increments a generation counter and, on the control
 thread, sets the pipeline to `NULL`, sets `uri`/`suburi`, volume and mute, goes
 to `READY`, posts an application message `sloptube-load` carrying the
-generation, and goes to `PAUSED`. The bus handler ignores every message until it
+generation, and goes to `PAUSED` (audio with nothing to seek to goes straight
+to `PLAYING`). The bus handler ignores every message until it
 sees the marker of the current generation, so errors and state changes left
 over from the previous video can't affect the new one. The start position is
 applied once the pipeline has prerolled. `NoPreroll` means a live stream.
@@ -365,7 +373,7 @@ when they change.
   position.
 - **Queue**: a playlist from the watch page data, or with autoplay the first
   related video. Shift+N/P and MPRIS Next/Previous move through it.
-- **Errors**: YouTube URLs expire, CDN nodes sometimes misbehave (for example
+- **Errors** (`common/src/recovery.rs`, used by Music too): YouTube URLs expire, CDN nodes sometimes misbehave (for example
   by ignoring range requests) and connections drop. GStreamer resource errors
   and stream failures ("Internal data stream error") count as transient: they
   trigger a fresh extraction and reload at the same position, at most twice;
@@ -378,7 +386,8 @@ when they change.
 - **Resume positions** go to `~/.local/share/sloptube/positions.json` every
   10 seconds, for videos longer than 2 minutes, between 15 seconds in and
   20 seconds before the end; the 400 most recent are kept.
-- **Watch history**, when signed in and enabled: a ping to the `playback` URL
+- **Watch history** (`common/src/history.rs`, used by Music too), when signed
+  in and enabled: a ping to the `playback` URL
   when playback starts, then a ping to the `watchtime` URL every 30 seconds and
   at the end, as the website does. Each carries a random client playback nonce
   (`cpn`) and the position (`cmt`); watch-time pings also carry the segment
@@ -629,7 +638,7 @@ stdout, a `-f` selector from the download quality, the output template
 for video, and the cookie file when signed in. The list and thumbnails are kept
 in `~/.local/share/sloptube/`.
 
-**MPRIS** (`mpris.rs`) exposes play, pause, stop, next, previous, seeking,
+**MPRIS** (`mpris.rs`, on `common::mpris`) exposes play, pause, stop, next, previous, seeking,
 volume, playback rate, *Quit*, and metadata (title, channel, artwork, length).
 *Raise* brings the window back after background playback.
 
@@ -645,10 +654,11 @@ SlopTube Music (`music/`, with its own [README](../music/README.md) and
 crate that runs in SlopTube's process. It shares the `common` crate (runtime,
 settings store, link parsing, touch helpers, the session and account, the
 InnerTube client core and JSON helpers, the image cache, the yt-dlp helper, the
-window shell, the player sheet, the search page, chips, list helpers and
-Preferences rows) and some of SlopTube's icons. It still has its own
-audio-only player, queue and library. SlopTube's `Application` owns the
-GApplication and calls the functions in `music/src/application.rs`:
+player, recovery, watch history, MPRIS, the window shell, the player sheet, the
+search page, chips, list helpers and Preferences rows) and some of SlopTube's
+icons. Its own are the YouTube Music API and parsers, the queue, the library,
+lyrics and its pages. SlopTube's `Application` owns the GApplication and calls
+the functions in `music/src/application.rs`:
 
 - **Opening it**: `sloptube --music` / `-m` is a GApplication option, and the
   application handles its command line (`HANDLES_COMMAND_LINE`), so a second

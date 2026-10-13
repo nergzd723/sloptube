@@ -67,6 +67,9 @@ where those libraries are shared with SlopTube.)
   listening history, kept on this computer (no account needed).
 - **The queue is restored** at startup, paused; nothing is fetched until you
   press play.
+- **Lost connections**: a stream that fails is loaded again with fresh URLs;
+  offline, the song waits and plays on from where it stopped once the network
+  is back, instead of skipping through the queue.
 - **MPRIS**: media keys and desktop media controls, including shuffle and
   loop status. **Background playback** after closing the window.
 - Opens `music.youtube.com` links (from anywhere), and `youtube.com` and
@@ -153,8 +156,8 @@ artists go to your account (and are mirrored in the local library). With *Use
 the account for audio* (on by default), yt-dlp gets the session through
 `$XDG_RUNTIME_DIR/sloptube/cookies-music.txt`, a private tmpfs file, for
 Premium quality and age-restricted songs. With *Add plays to YouTube history*
-(on by default), each song that starts playing is reported the way the website
-does it. Signing out removes the session, the cookie file and nothing else.
+(on by default), each song that starts playing, and the time played, is
+reported the way the website does it. Signing out removes the session, the cookie file and nothing else.
 
 ## Keyboard shortcuts
 
@@ -205,11 +208,11 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `src/account.rs` | Handing the shared session (`common::account`) to yt-dlp. |
 | `src/application.rs` | What SlopTube calls: setting up on first use, the window, links, the dialogs, and the playback hooks. |
 | `src/extractor.rs` | Music's requests to the shared yt-dlp extractor (`common::extractor`), and picking the audio stream. |
-| `src/player.rs` | The GStreamer player: audio-only playbin3, control thread, gapless hand-over. |
-| `src/playback.rs` | The queue: radios, autoplay, shuffle/repeat, prefetching, retries, session restore. |
+| `src/player.rs` | Music's settings for the shared player (`common::player`): audio only, gapless. |
+| `src/playback.rs` | The queue: radios, autoplay, shuffle/repeat, prefetching, retries and waiting for the network (`common::recovery`), history (`common::history`), session restore. |
 | `src/library.rs` | The local library. |
 | `src/image.rs` | Dominant colours, on the shared image cache (`common::image`). |
-| `src/mpris.rs` | MPRIS. |
+| `src/mpris.rs` | Music's MPRIS player (on `common::mpris`). |
 | `src/ui/rows.rs` | `RowList`, the virtualised list every page is built on. |
 | `src/ui/shelf.rs`, `cards.rs`, `art.rs` | Shelves, tiles, rows, artwork and tint widgets. |
 | `src/ui/browse.rs`, `collection.rs`, `artist.rs`, `search.rs`, `library.rs` | Pages (search on the shared `common::search` page). |
