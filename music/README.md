@@ -212,10 +212,10 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `src/mpris.rs` | MPRIS. |
 | `src/ui/rows.rs` | `RowList`, the virtualised list every page is built on. |
 | `src/ui/shelf.rs`, `cards.rs`, `art.rs` | Shelves, tiles, rows, artwork and tint widgets. |
-| `src/ui/browse.rs`, `collection.rs`, `artist.rs`, `search.rs`, `library.rs` | Pages. |
+| `src/ui/browse.rs`, `collection.rs`, `artist.rs`, `search.rs`, `library.rs` | Pages (search on the shared `common::search` page). |
 | `src/ui/login.rs` | The shared sign-in dialog with Music's icon, and the account button. |
 | `src/ui/now_playing.rs`, `player_bar.rs`, `queue.rs`, `lyrics.rs` | Now playing and the bars (the sheet between them is `common::sheet`, shared with SlopTube). |
-| `src/ui/window.rs` | The adaptive window. |
+| `src/ui/window.rs` | The adaptive window, on the shared shell (`common::shell`). |
 
 ## Development
 

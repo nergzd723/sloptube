@@ -83,6 +83,10 @@ A video goes through these steps:
 | `common/src/links.rs` | Parsing YouTube and YouTube Music links. |
 | `common/src/touch.rs` | Taps that only stop a gliding list; labels that let touch scroll. |
 | `common/src/sheet.rs` | The draggable player sheet. |
+| `common/src/shell.rs` | The window frame: tabs with their navigation stacks, sidebar or bottom tab bar, breakpoints, toasts, keeping focus in the sheet, the Open Link dialog. |
+| `common/src/search.rs` | The search page: entry, history and suggestions; each app gives it its results. |
+| `common/src/chips.rs`, `lists.rs` | The filter chip row; appending a page of items to a list a few per frame. |
+| `common/src/preferences.rs` | Rows both Preferences dialogs use (account, region, search history). |
 | `common/src/innertube/` | The InnerTube client core (`WEB` and `WEB_REMIX` profiles), JSON helpers, shared model types. |
 | `common/src/session.rs` | The session in memory, which both clients sign from. |
 | `common/src/auth/` | Cookie jar, `SAPISIDHASH`, `Set-Cookie` handling, keyring storage, the cookie files for yt-dlp; Firefox and Chromium import. |
@@ -418,7 +422,7 @@ on `row-selected` popped pages nobody asked to leave.
 
 Pages that are off screen (the other tabs, and pages under the current one) have
 their content hidden until they are mapped again (`hide_content_while_unmapped`
-in `window.rs`). On every press and release GTK sets `:active` on each widget
+in `common/src/shell.rs`). On every press and release GTK sets `:active` on each widget
 from the pressed one up to the window, which restyles every widget whose style
 depends on an ancestor's state. Style updates skip hidden widgets but not pages
 a stack merely stops drawing, so without this each touch restyled every feed
@@ -432,8 +436,11 @@ area exist (`GtkGridView` keeps up to `max-columns` × 30 of them). It is
 given a `Loader`, a closure that returns a page for an optional continuation
 token, and loads the next page when the view is scrolled near the end. That
 check only runs when the view is mapped and has a real size: without that guard
-a feed whose content didn't fill the view kept loading pages forever. A chips
-row, an empty state and an error state with a retry button are built in.
+a feed whose content didn't fill the view kept loading pages forever. A page
+goes into the list a few cards per frame (`common::lists::Trickle`): binding a
+whole page at once stalled scrolling for a couple of frames. A chips row
+(`common::chips`), an empty state and an error state with a retry button are
+built in.
 
 Cards come in grid and compact styles and have a menu: Save to Watch later,
 Play as audio, Download, Go to channel, Copy link.
@@ -496,7 +503,7 @@ moving, the paintable the floating copy shows, and how it fits.
   from the finger's velocity.
 - The sheet is locked in fullscreen.
 - While the sheet is open, keyboard focus stays in the player
-  (`Window::keep_focus_in_player`). Crossing a breakpoint (the window manager's
+  (`Shell::keep_focus_in`). Crossing a breakpoint (the window manager's
   fullscreen, or a resize) hides the `AdwBreakpointBin` content for a frame. GTK
   moves focus away, and libadwaita replays those moves as Tab presses on the next
   frame, which end on a sidebar row or header button behind the sheet. Once
@@ -636,12 +643,12 @@ it.
 SlopTube Music (`music/`, with its own [README](../music/README.md) and
 [plan](../music/docs/PLAN.md)) began as a separate program and is now a library
 crate that runs in SlopTube's process. It shares the `common` crate (runtime,
-settings store, link parsing, touch helpers, the player sheet, the session and
-account, the InnerTube client core and JSON helpers, the image cache) and some
-of SlopTube's icons. It still has its own audio-only player, queue, library and
-yt-dlp helper; those started as copies of SlopTube's and are being moved into
-`common` one by one. SlopTube's `Application` owns the GApplication and calls the functions in
-`music/src/application.rs`:
+settings store, link parsing, touch helpers, the session and account, the
+InnerTube client core and JSON helpers, the image cache, the yt-dlp helper, the
+window shell, the player sheet, the search page, chips, list helpers and
+Preferences rows) and some of SlopTube's icons. It still has its own
+audio-only player, queue and library. SlopTube's `Application` owns the
+GApplication and calls the functions in `music/src/application.rs`:
 
 - **Opening it**: `sloptube --music` / `-m` is a GApplication option, and the
   application handles its command line (`HANDLES_COMMAND_LINE`), so a second
