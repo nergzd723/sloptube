@@ -1,11 +1,12 @@
 //! Music inside SlopTube's application: setting up on first use, the window,
-//! links, and the app-wide dialogs.
+//! links, the app-wide dialogs, and the hooks SlopTube uses to keep the two
+//! players from playing at once.
 //!
 //! Nothing here runs until Music is first opened: launching SlopTube alone
 //! doesn't read Music's session, restore its queue or register its MPRIS
 //! player.
 
-use std::cell::Cell;
+use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
 use gtk::{gio, glib};
@@ -15,6 +16,7 @@ use crate::api;
 use crate::config;
 use crate::library::Library;
 use crate::playback::Playback;
+use crate::player::PlayState;
 use crate::runtime;
 use crate::settings;
 use crate::ui::window::Window;
@@ -25,6 +27,7 @@ pub use crate::ui::window::WINDOW_CLASS;
 
 thread_local! {
     static STARTED: Cell<bool> = const { Cell::new(false) };
+    static ON_PLAYING: RefCell<Option<Box<dyn Fn()>>> = const { RefCell::new(None) };
 }
 
 /// Register Music's resources (stylesheet, icons) under [`RESOURCE_BASE`].
@@ -49,6 +52,15 @@ fn start(app: &adw::Application) {
     let pb = Playback::get();
     // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.
     pb.restore_session();
+    pb.player().connect_state_notify(|p| {
+        if p.state() == PlayState::Playing {
+            ON_PLAYING.with(|f| {
+                if let Some(f) = &*f.borrow() {
+                    f();
+                }
+            });
+        }
+    });
 
     let raise = {
         let app = app.downgrade();
@@ -144,6 +156,11 @@ pub fn pause() {
             player.pause();
         }
     }
+}
+
+/// Call `f` whenever Music starts playing.
+pub fn connect_started_playing(f: impl Fn() + 'static) {
+    ON_PLAYING.with(|cb| cb.replace(Some(Box::new(f))));
 }
 
 /// Before the application exits: save the queue and the library, and bring

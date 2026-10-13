@@ -3,7 +3,7 @@
 //! SlopTube Music runs in the same application: `sloptube --music`, the
 //! "Open SlopTube Music" menu item and music.youtube.com links open its
 //! window. App-wide actions (preferences, about, shortcuts) act for the app
-//! whose window is active.
+//! whose window is active, and each player pauses the other when it starts.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -12,7 +12,7 @@ use gtk::{gdk, gio, glib};
 use crate::account::Account;
 use crate::api;
 use crate::config;
-use crate::player::decoders;
+use crate::player::{PlayState, decoders};
 use crate::runtime;
 use crate::settings;
 use crate::ui::window::Window;
@@ -58,6 +58,12 @@ mod imp {
             api::client().set_region(s.region.clone());
             decoders::set_hardware_decoding(s.hw_decode);
             app.setup_actions();
+            // Music starting to play pauses the videos.
+            sloptube_music::connect_started_playing(glib::clone!(
+                #[weak]
+                app,
+                move || app.pause_videos()
+            ));
             Account::get().load_stored();
             runtime::spawn(async {
                 if let Err(e) = api::client().refresh_client_version().await {
@@ -174,6 +180,12 @@ impl Application {
             return w;
         }
         let win = Window::new(self.upcast_ref());
+        // A video starting to play pauses Music.
+        win.playback().player().connect_state_notify(|p| {
+            if p.state() == PlayState::Playing {
+                sloptube_music::pause();
+            }
+        });
         // Each SlopTube window registers its own MPRIS player, which goes away
         // with the window (Music can keep the application running after that).
         let pb = win.playback();
@@ -205,6 +217,18 @@ impl Application {
     /// The active window, if it's Music's.
     fn music_window(&self) -> Option<gtk::Window> {
         self.active_window().filter(sloptube_music::owns)
+    }
+
+    /// Pause every video (Music started playing).
+    fn pause_videos(&self) {
+        for w in self.windows() {
+            if let Ok(win) = w.downcast::<Window>() {
+                let player = win.playback().player();
+                if player.is_playing_intent() {
+                    player.pause();
+                }
+            }
+        }
     }
 
     /// Stop the videos and close SlopTube's windows; Music keeps running.
