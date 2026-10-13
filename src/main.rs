@@ -3,6 +3,7 @@ mod api;
 mod application;
 mod auth;
 mod config;
+mod css;
 mod diagnose;
 mod downloads;
 mod extractor;

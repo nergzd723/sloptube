@@ -40,13 +40,7 @@ mod imp {
 
             let display = gdk::Display::default().expect("no display");
             gtk::IconTheme::for_display(&display).add_resource_path("/io/github/nergzd/SlopTube/icons");
-            let css = gtk::CssProvider::new();
-            css.load_from_resource("/io/github/nergzd/SlopTube/style.css");
-            gtk::style_context_add_provider_for_display(
-                &display,
-                &css,
-                gtk::STYLE_PROVIDER_PRIORITY_APPLICATION,
-            );
+            add_window_stylesheet(&display, "/io/github/nergzd/SlopTube/style.css", "sloptube");
 
             let s = settings::get();
             ui::preferences::apply_color_scheme(s.color_scheme);
@@ -241,6 +235,20 @@ impl Default for Application {
     fn default() -> Self {
         Self::new()
     }
+}
+
+/// Load a stylesheet from the resources for the windows with the CSS class `scope` only.
+fn add_window_stylesheet(display: &gdk::Display, resource: &str, scope: &str) {
+    let css = match gio::resources_lookup_data(resource, gio::ResourceLookupFlags::NONE) {
+        Ok(data) => crate::css::scoped(&String::from_utf8_lossy(&data), scope),
+        Err(e) => {
+            log::warn!("no stylesheet at {resource}: {e}");
+            return;
+        }
+    };
+    let provider = gtk::CssProvider::new();
+    provider.load_from_string(&css);
+    gtk::style_context_add_provider_for_display(display, &provider, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
 }
 
 fn show_shortcuts(parent: &Window) {
