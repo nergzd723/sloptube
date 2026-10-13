@@ -15,6 +15,7 @@ pub mod links;
 pub mod lists;
 pub mod login;
 pub mod memory;
+pub mod mpris;
 pub mod paths;
 pub mod player;
 pub mod preferences;

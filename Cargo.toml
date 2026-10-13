@@ -37,8 +37,6 @@ rand = "0.9"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
 
-mpris-server = "0.10"
-
 # The sink's Wayland, X11 and DMABuf paths need libraries that only Linux has,
 # so other platforms (macOS) build without them (as without WebKitGTK).
 [target.'cfg(target_os = "linux")'.dependencies]

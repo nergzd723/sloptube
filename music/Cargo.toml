@@ -21,7 +21,6 @@ anyhow = "1"
 url = "2"
 rand = "0.9"
 log = "0.4"
-mpris-server = "0.10"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 # Gives the Music window its own Wayland app ID (icon, window rules).
