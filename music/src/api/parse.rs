@@ -4,6 +4,8 @@
 //! know wherever they are instead of following long fixed paths: a response
 //! whose layout changes tends to lose a field rather than the whole page.
 
+use common::innertube::json::{continuation, find_all, find_thumbnails, parse_duration, str_at, string_at};
+pub use common::innertube::json::{find_key, parse_account_menu, text};
 use serde_json::Value;
 
 use super::model::*;
@@ -12,79 +14,12 @@ use super::model::*;
 // Helpers
 // ---------------------------------------------------------------------------
 
-/// The text of a `{simpleText}` or `{runs: [...]}` object.
-pub fn text(v: &Value) -> Option<String> {
-    if let Some(s) = v.get("simpleText").and_then(Value::as_str) {
-        return Some(s.to_owned());
-    }
-    if let Some(s) = v.get("content").and_then(Value::as_str) {
-        return Some(s.to_owned());
-    }
-    let runs = v.get("runs")?.as_array()?;
-    Some(runs.iter().filter_map(|r| r.get("text").and_then(Value::as_str)).collect())
-}
-
 fn text_of(v: &Value, key: &str) -> String {
     v.get(key).and_then(text).unwrap_or_default()
 }
 
 fn runs(v: &Value) -> &[Value] {
     v.get("runs").and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
-}
-
-fn str_at<'a>(v: &'a Value, pointer: &str) -> Option<&'a str> {
-    v.pointer(pointer)?.as_str()
-}
-
-fn string_at(v: &Value, pointer: &str) -> Option<String> {
-    str_at(v, pointer).filter(|s| !s.is_empty()).map(str::to_owned)
-}
-
-/// First value under `key`, depth first.
-pub fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
-    match v {
-        Value::Object(map) => {
-            if let Some(x) = map.get(key) {
-                return Some(x);
-            }
-            map.values().find_map(|x| find_key(x, key))
-        }
-        Value::Array(a) => a.iter().find_map(|x| find_key(x, key)),
-        _ => None,
-    }
-}
-
-/// All values under `key` (not looking inside matches).
-fn find_all<'a>(v: &'a Value, key: &str, out: &mut Vec<&'a Value>) {
-    match v {
-        Value::Object(map) => {
-            for (k, x) in map {
-                if k == key {
-                    out.push(x);
-                } else {
-                    find_all(x, key, out);
-                }
-            }
-        }
-        Value::Array(a) => a.iter().for_each(|x| find_all(x, key, out)),
-        _ => {}
-    }
-}
-
-/// The first `thumbnails` list under `v`.
-pub fn thumbnails(v: &Value) -> Vec<Thumbnail> {
-    let Some(list) = find_key(v, "thumbnails").and_then(Value::as_array) else {
-        return Vec::new();
-    };
-    list.iter()
-        .filter_map(|t| {
-            Some(Thumbnail {
-                url: t.get("url")?.as_str()?.to_owned(),
-                width: t.get("width").and_then(Value::as_u64).unwrap_or(0) as u32,
-                height: t.get("height").and_then(Value::as_u64).unwrap_or(0) as u32,
-            })
-        })
-        .collect()
 }
 
 fn browse_target(endpoint: &Value) -> Option<BrowseTarget> {
@@ -140,21 +75,6 @@ fn wide_thumbnails(thumbs: &[Thumbnail]) -> bool {
         .iter()
         .max_by_key(|t| t.width)
         .is_some_and(|t| t.height > 0 && t.width * 10 > t.height * 13)
-}
-
-/// The continuation token of a shelf or section list, in either of the shapes YouTube uses.
-fn continuation(container: &Value) -> Option<String> {
-    if let Some(c) = container.get("continuations").and_then(Value::as_array) {
-        for c in c {
-            for kind in ["nextContinuationData", "nextRadioContinuationData", "reloadContinuationData"] {
-                if let Some(t) = string_at(c, &format!("/{kind}/continuation")) {
-                    return Some(t);
-                }
-            }
-        }
-    }
-    let last = container.get("contents").and_then(Value::as_array)?.last()?;
-    string_at(last, "/continuationItemRenderer/continuationEndpoint/continuationCommand/token")
 }
 
 // ---------------------------------------------------------------------------
@@ -239,7 +159,7 @@ fn classify(seg: &[&Value]) -> Segment {
     }
     let t: String = seg.iter().map(|r| run_text(r)).collect();
     let t = t.trim();
-    if let Some(d) = parse_duration(t) {
+    if let Some(d) = parse_duration(t).and_then(|d| u32::try_from(d).ok()) {
         Segment::Duration(d)
     } else if KIND_WORDS.contains(&t) {
         Segment::Kind(t.to_owned())
@@ -308,7 +228,7 @@ fn play_overlay(r: &Value) -> Option<WatchTarget> {
 fn parse_two_row(r: &Value) -> Option<Item> {
     let title = text_of(r, "title");
     let nav = r.get("navigationEndpoint")?;
-    let thumbs = r.get("thumbnailRenderer").map(thumbnails).unwrap_or_default();
+    let thumbs = r.get("thumbnailRenderer").map(find_thumbnails).unwrap_or_default();
     let sub_runs = r.get("subtitle").map(runs).unwrap_or(&[]);
     let subtitle = text_of(r, "subtitle");
     let artists = artists_in(sub_runs);
@@ -380,7 +300,7 @@ fn parse_list_item(r: &Value) -> Option<Item> {
         return None;
     }
     let title_nav = runs(title_v).first().and_then(|r| r.get("navigationEndpoint"));
-    let thumbs = r.get("thumbnail").map(thumbnails).unwrap_or_default();
+    let thumbs = r.get("thumbnail").map(find_thumbnails).unwrap_or_default();
     let overlay = play_overlay(r);
     let video_id = string_at(r, "/playlistItemData/videoId")
         .or_else(|| title_nav.and_then(|n| string_at(n, "/watchEndpoint/videoId")))
@@ -457,6 +377,7 @@ fn parse_list_item(r: &Value) -> Option<Item> {
                 .pointer("/musicResponsiveListItemFixedColumnRenderer/text")
                 .and_then(text)
                 .and_then(|s| parse_duration(&s))
+                .and_then(|d| u32::try_from(d).ok())
             {
                 t.duration = Some(d);
             }
@@ -490,8 +411,9 @@ fn parse_panel_video(r: &Value) -> Option<Track> {
     let mut t = Track {
         video_id,
         title: text_of(r, "title"),
-        thumbnails: r.get("thumbnail").map(thumbnails).unwrap_or_default(),
-        duration: r.get("lengthText").and_then(text).and_then(|s| parse_duration(&s)),
+        thumbnails: r.get("thumbnail").map(find_thumbnails).unwrap_or_default(),
+        duration: r.get("lengthText").and_then(text).and_then(|s| parse_duration(&s))
+                .and_then(|d| u32::try_from(d).ok()),
         explicit: is_explicit(r),
         playlist_id: nav.and_then(|n| string_at(n, "/watchEndpoint/playlistId")),
         set_video_id: string_at(r, "/playlistSetVideoId"),
@@ -622,7 +544,7 @@ fn card_shelf(x: &Value) -> Option<Shelf> {
         .and_then(|r| r.get("navigationEndpoint"))
         .or_else(|| x.get("onTap"));
     let subtitle = text_of(x, "subtitle");
-    let thumbs = x.get("thumbnail").map(thumbnails).unwrap_or_default();
+    let thumbs = x.get("thumbnail").map(find_thumbnails).unwrap_or_default();
     let title = text_of(x, "title");
     let mut items = Vec::new();
     if let Some(nav) = nav {
@@ -727,9 +649,7 @@ fn walk_shelves(v: &Value, out: &mut Vec<Shelf>) {
 }
 
 fn chips(v: &Value) -> Vec<Chip> {
-    let mut found = Vec::new();
-    find_all(v, "chipCloudChipRenderer", &mut found);
-    found
+    find_all(v, "chipCloudChipRenderer")
         .into_iter()
         .filter_map(|c| {
             let nav = c.get("navigationEndpoint")?;
@@ -855,7 +775,7 @@ pub fn parse_collection(v: &Value, id: &str) -> CollectionPage {
             .and_then(|d| find_key(d, "description").and_then(text).or_else(|| text(d)))
             .map(|d| d.replace("\r\n", "\n"))
             .filter(|d| !d.trim().is_empty());
-        page.thumbnails = h.get("thumbnail").map(thumbnails).unwrap_or_default();
+        page.thumbnails = h.get("thumbnail").map(find_thumbnails).unwrap_or_default();
         if let Some(strap) = h.get("straplineTextOne") {
             for seg in split_segments(runs(strap)) {
                 match classify(&seg) {
@@ -951,7 +871,7 @@ pub fn parse_artist(v: &Value, id: &str) -> ArtistPage {
         page.thumbnails = h
             .get("thumbnail")
             .or_else(|| h.get("foregroundThumbnail"))
-            .map(thumbnails)
+            .map(find_thumbnails)
             .unwrap_or_default();
         page.subscribers = h
             .pointer("/subscriptionButton/subscribeButtonRenderer/subscriberCountText")
@@ -1055,27 +975,9 @@ pub fn parse_lyrics(v: &Value) -> Option<Lyrics> {
 }
 
 /// The signed-in account, or `None` when the session isn't signed in.
-pub fn parse_account_menu(v: &Value) -> Option<AccountInfo> {
-    let h = find_key(v, "activeAccountHeaderRenderer")?;
-    let name = h.get("accountName").and_then(text).unwrap_or_default();
-    if name.is_empty() {
-        return None;
-    }
-    Some(AccountInfo {
-        name,
-        handle: h.get("channelHandle").and_then(text).filter(|s| !s.is_empty()),
-        avatar: h
-            .get("accountPhoto")
-            .map(thumbnails)
-            .and_then(|t| thumb_url(&t, 96)),
-    })
-}
-
 pub fn parse_suggestions(v: &Value) -> Suggestions {
     let mut s = Suggestions::default();
-    let mut found = Vec::new();
-    find_all(v, "searchSuggestionRenderer", &mut found);
-    for r in found {
+    for r in find_all(v, "searchSuggestionRenderer") {
         let q = r
             .pointer("/navigationEndpoint/searchEndpoint/query")
             .and_then(Value::as_str)
@@ -1085,9 +987,10 @@ pub fn parse_suggestions(v: &Value) -> Suggestions {
             s.queries.push(q);
         }
     }
-    let mut items = Vec::new();
-    find_all(v, "musicResponsiveListItemRenderer", &mut items);
-    s.items = items.into_iter().filter_map(parse_list_item).collect();
+    s.items = find_all(v, "musicResponsiveListItemRenderer")
+        .into_iter()
+        .filter_map(parse_list_item)
+        .collect();
     s
 }
 

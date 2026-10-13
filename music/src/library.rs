@@ -13,7 +13,7 @@ use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 use serde::{Deserialize, Serialize};
 
-use crate::api::{self, Card, CardKind, Rating, Track};
+use crate::api::{self, Card, CardKind, LikeStatus, Track};
 use crate::config;
 use crate::runtime;
 
@@ -160,7 +160,7 @@ impl Library {
         self.set_liked(track, liked);
         if api::client().is_signed_in() {
             let id = track.video_id.clone();
-            let rating = if liked { Rating::Like } else { Rating::Indifferent };
+            let rating = if liked { LikeStatus::Like } else { LikeStatus::Indifferent };
             remote(async move { api::client().rate_song(&id, rating).await }, "Couldn't update the like on YouTube");
         }
         liked
@@ -176,7 +176,7 @@ impl Library {
         if api::client().is_signed_in() {
             let id = track.video_id.clone();
             remote(
-                async move { api::client().rate_song(&id, Rating::Dislike).await },
+                async move { api::client().rate_song(&id, LikeStatus::Dislike).await },
                 "Couldn't dislike the song on YouTube",
             );
         }
@@ -188,7 +188,7 @@ impl Library {
         let saved = !self.is_saved(&card.target.id);
         self.set_saved(card, saved);
         if api::client().is_signed_in() {
-            let rating = if saved { Rating::Like } else { Rating::Indifferent };
+            let rating = if saved { LikeStatus::Like } else { LikeStatus::Indifferent };
             match card.kind {
                 CardKind::Artist | CardKind::Profile => {
                     let id = card.target.id.clone();

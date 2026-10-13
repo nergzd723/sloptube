@@ -6,6 +6,10 @@
 
 use std::collections::{HashMap, HashSet};
 
+use common::innertube::json::{
+    command_token as continuation_token, find_all, fix_url, looks_like_duration, parse_duration, str_at, thumbnails,
+};
+pub use common::innertube::json::{find_key, parse_account_menu, text};
 use serde_json::Value;
 
 use super::model::*;
@@ -13,107 +17,6 @@ use super::model::*;
 // ---------------------------------------------------------------------------
 // Generic helpers
 // ---------------------------------------------------------------------------
-
-/// Extract display text from `{simpleText}`, `{runs:[{text}]}`, `{content}` or a plain string.
-pub fn text(v: &Value) -> Option<String> {
-    fn raw(v: &Value) -> Option<String> {
-        match v {
-            Value::String(s) => Some(s.clone()),
-            Value::Object(map) => {
-                if let Some(s) = map.get("simpleText").and_then(Value::as_str) {
-                    Some(s.to_owned())
-                } else if let Some(runs) = map.get("runs").and_then(Value::as_array) {
-                    Some(
-                        runs.iter()
-                            .filter_map(|r| r.get("text").and_then(Value::as_str))
-                            .collect(),
-                    )
-                } else if let Some(s) = map.get("content").and_then(Value::as_str) {
-                    Some(s.to_owned())
-                } else {
-                    map.get("text").and_then(raw)
-                }
-            }
-            _ => None,
-        }
-    }
-    raw(v).filter(|s| !s.trim().is_empty())
-}
-
-fn text_at(v: &Value, ptr: &str) -> Option<String> {
-    v.pointer(ptr).and_then(text)
-}
-
-fn str_at<'a>(v: &'a Value, ptr: &str) -> Option<&'a str> {
-    v.pointer(ptr).and_then(Value::as_str)
-}
-
-/// Depth-first search for the first value stored under `key`.
-pub fn find_key<'a>(v: &'a Value, key: &str) -> Option<&'a Value> {
-    match v {
-        Value::Object(map) => {
-            if let Some(found) = map.get(key) {
-                return Some(found);
-            }
-            map.values().find_map(|child| find_key(child, key))
-        }
-        Value::Array(arr) => arr.iter().find_map(|child| find_key(child, key)),
-        _ => None,
-    }
-}
-
-/// Collect every value stored under `key` (does not descend into matches).
-pub fn find_all<'a>(v: &'a Value, key: &str) -> Vec<&'a Value> {
-    fn rec<'a>(v: &'a Value, key: &str, out: &mut Vec<&'a Value>) {
-        match v {
-            Value::Object(map) => {
-                for (k, child) in map {
-                    if k == key {
-                        out.push(child);
-                    } else {
-                        rec(child, key, out);
-                    }
-                }
-            }
-            Value::Array(arr) => arr.iter().for_each(|c| rec(c, key, out)),
-            _ => {}
-        }
-    }
-    let mut out = Vec::new();
-    rec(v, key, &mut out);
-    out
-}
-
-fn fix_url(u: &str) -> String {
-    if let Some(rest) = u.strip_prefix("//") {
-        format!("https://{rest}")
-    } else {
-        u.to_owned()
-    }
-}
-
-/// Parse thumbnails from `{thumbnails:[..]}`, `{sources:[..]}`, `{image:{sources}}` or an array.
-pub fn thumbnails(v: &Value) -> Vec<Thumbnail> {
-    let arr = v
-        .get("thumbnails")
-        .or_else(|| v.get("sources"))
-        .or_else(|| v.pointer("/image/sources"))
-        .and_then(Value::as_array)
-        .or_else(|| v.as_array());
-    arr.map(|a| {
-        a.iter()
-            .filter_map(|t| {
-                let url = t.get("url")?.as_str()?;
-                Some(Thumbnail {
-                    url: fix_url(url),
-                    width: t.get("width").and_then(Value::as_u64).unwrap_or(0) as u32,
-                    height: t.get("height").and_then(Value::as_u64).unwrap_or(0) as u32,
-                })
-            })
-            .collect()
-    })
-    .unwrap_or_default()
-}
 
 fn best_url(v: &Value, min_width: u32) -> Option<String> {
     let thumbs = thumbnails(v);
@@ -135,21 +38,6 @@ fn channel_browse_id(v: &Value) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn continuation_token(v: &Value) -> Option<String> {
-    find_key(v, "continuationCommand")
-        .and_then(|c| c.get("token"))
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-}
-
-fn looks_like_duration(s: &str) -> bool {
-    let parts: Vec<&str> = s.split(':').collect();
-    (2..=3).contains(&parts.len())
-        && parts
-            .iter()
-            .all(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
-}
-
 fn is_views_text(t: &str, a11y: Option<&str>) -> bool {
     let l = t.to_ascii_lowercase();
     l.contains(" view")
@@ -167,13 +55,6 @@ fn is_time_text(t: &str) -> bool {
         || l.starts_with("scheduled")
         || l.starts_with("updated")
         || l.starts_with("started")
-}
-
-/// True if the response says the request was handled as logged out.
-pub fn is_logged_out(resp: &Value) -> bool {
-    resp.pointer("/responseContext/mainAppWebResponseContext/loggedOut")
-        .and_then(Value::as_bool)
-        .unwrap_or(true)
 }
 
 // ---------------------------------------------------------------------------
@@ -926,14 +807,6 @@ pub fn add_timestamp_links(rt: &mut RichText) {
     }
 }
 
-pub fn parse_duration(s: &str) -> Option<u64> {
-    let mut total = 0u64;
-    for part in s.split(':') {
-        total = total * 60 + part.trim().parse::<u64>().ok()?;
-    }
-    Some(total)
-}
-
 // ---------------------------------------------------------------------------
 // Watch page (/next)
 // ---------------------------------------------------------------------------
@@ -1413,15 +1286,6 @@ pub fn parse_guide_subscriptions(resp: &Value) -> Vec<ChannelItem> {
         });
     }
     out
-}
-
-pub fn parse_account_menu(resp: &Value) -> Option<AccountInfo> {
-    let h = find_key(resp, "activeAccountHeaderRenderer")?;
-    Some(AccountInfo {
-        name: h.get("accountName").and_then(text).unwrap_or_default(),
-        handle: h.get("channelHandle").and_then(text),
-        avatar: h.get("accountPhoto").and_then(|p| best_url(p, 88)),
-    })
 }
 
 #[cfg(test)]

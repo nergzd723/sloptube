@@ -363,15 +363,15 @@ impl Client {
     }
 
     /// Like, dislike or clear the rating of a song.
-    pub async fn rate_song(&self, video_id: &str, rating: Rating) -> Result<()> {
-        self.post(rate_endpoint(rating), json!({ "target": { "videoId": video_id } }))
+    pub async fn rate_song(&self, video_id: &str, rating: LikeStatus) -> Result<()> {
+        self.post(rating.endpoint(), json!({ "target": { "videoId": video_id } }))
             .await
             .map(drop)
     }
 
     /// Save an album or playlist to the library (like) or remove it.
-    pub async fn rate_playlist(&self, playlist_id: &str, rating: Rating) -> Result<()> {
-        self.post(rate_endpoint(rating), json!({ "target": { "playlistId": playlist_id } }))
+    pub async fn rate_playlist(&self, playlist_id: &str, rating: LikeStatus) -> Result<()> {
+        self.post(rating.endpoint(), json!({ "target": { "playlistId": playlist_id } }))
             .await
             .map(drop)
     }
@@ -407,14 +407,6 @@ impl Client {
     pub async fn lyrics(&self, browse_id: &str) -> Result<Option<Lyrics>> {
         let v = self.browse(browse_id, None).await?;
         Ok(parse::parse_lyrics(&v))
-    }
-}
-
-fn rate_endpoint(rating: Rating) -> &'static str {
-    match rating {
-        Rating::Like => "like/like",
-        Rating::Dislike => "like/dislike",
-        Rating::Indifferent => "like/removelike",
     }
 }
 

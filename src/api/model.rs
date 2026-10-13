@@ -2,23 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
-pub struct Thumbnail {
-    pub url: String,
-    pub width: u32,
-    pub height: u32,
-}
-
-/// Pick the smallest thumbnail at least `min_width` pixels wide, or the largest available.
-pub fn pick_thumbnail(thumbs: &[Thumbnail], min_width: u32) -> Option<&Thumbnail> {
-    let mut sorted: Vec<&Thumbnail> = thumbs.iter().collect();
-    sorted.sort_by_key(|t| t.width);
-    sorted
-        .iter()
-        .find(|t| t.width >= min_width)
-        .or(sorted.last())
-        .copied()
-}
+pub use common::innertube::model::{AccountInfo, LikeStatus, Thumbnail, pick_thumbnail};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VideoItem {
@@ -130,14 +114,6 @@ pub struct FeedPage {
     pub sections: Vec<(usize, String)>,
     /// Message YouTube shows instead of content (e.g. "Try searching to get started").
     pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum LikeStatus {
-    #[default]
-    Indifferent,
-    Like,
-    Dislike,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -252,11 +228,4 @@ pub struct PlaylistPage {
     pub description: Option<String>,
     pub thumbnails: Vec<Thumbnail>,
     pub content: FeedPage,
-}
-
-#[derive(Debug, Clone, Default, Serialize, Deserialize)]
-pub struct AccountInfo {
-    pub name: String,
-    pub handle: Option<String>,
-    pub avatar: Option<String>,
 }

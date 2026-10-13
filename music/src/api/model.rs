@@ -2,50 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct Thumbnail {
-    pub url: String,
-    #[serde(default)]
-    pub width: u32,
-    #[serde(default)]
-    pub height: u32,
-}
-
-/// An image URL for a thumbnail list, sized for `width` pixels.
-///
-/// Google's image servers (`*.googleusercontent.com`, `*.ggpht.com`) scale on
-/// request through the `=wN-hN` suffix, so we ask for exactly what we show and
-/// both the download and the decoded texture stay small. Video thumbnails
-/// (`i.ytimg.com`) come in fixed sizes: the smallest one that is big enough.
-pub fn thumb_url(thumbs: &[Thumbnail], width: u32) -> Option<String> {
-    let largest = thumbs.iter().max_by_key(|t| t.width)?;
-    let url = &largest.url;
-    if is_resizable(url)
-        && let Some(pos) = url.rfind('=') {
-            let (w, h) = (largest.width.max(1), largest.height.max(1));
-            let height = ((width as u64 * h as u64) / w as u64).max(1);
-            let crop = if url[pos..].contains("-p-") { "-p" } else { "" };
-            return Some(format!("{}=w{width}-h{height}{crop}-l90-rj", &url[..pos]));
-        }
-    // Small video thumbnails: the 320×180 one, not the letterboxed 480×360.
-    if width <= 320
-        && url.contains("i.ytimg.com/vi/")
-        && let Some(id) = url.split("/vi/").nth(1).and_then(|r| r.split('/').next())
-    {
-        return Some(format!("https://i.ytimg.com/vi/{id}/mqdefault.jpg"));
-    }
-    let mut sorted: Vec<&Thumbnail> = thumbs.iter().collect();
-    sorted.sort_by_key(|t| t.width);
-    sorted
-        .iter()
-        .find(|t| t.width >= width)
-        .or(sorted.last())
-        .map(|t| t.url.clone())
-}
-
-fn is_resizable(url: &str) -> bool {
-    url.contains("googleusercontent.com/") || url.contains("ggpht.com/")
-}
+pub use common::innertube::model::{AccountInfo, LikeStatus, Thumbnail, thumb_url};
 
 /// What a browse id leads to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -429,85 +386,9 @@ pub struct Suggestions {
     pub items: Vec<Item>,
 }
 
-/// The signed-in account (from `account/account_menu`).
-#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AccountInfo {
-    pub name: String,
-    #[serde(default)]
-    pub handle: Option<String>,
-    #[serde(default)]
-    pub avatar: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum Rating {
-    Like,
-    Dislike,
-    Indifferent,
-}
-
-/// "4:09" / "1:02:03" -> seconds.
-pub fn parse_duration(s: &str) -> Option<u32> {
-    let s = s.trim();
-    if s.is_empty() || !s.contains(':') {
-        return None;
-    }
-    let mut total: u32 = 0;
-    for part in s.split(':') {
-        if part.is_empty() || part.len() > 2 || !part.chars().all(|c| c.is_ascii_digit()) {
-            return None;
-        }
-        total = total.checked_mul(60)?.checked_add(part.parse().ok()?)?;
-    }
-    Some(total)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn durations() {
-        assert_eq!(parse_duration("4:09"), Some(249));
-        assert_eq!(parse_duration("1:02:03"), Some(3723));
-        assert_eq!(parse_duration("Song"), None);
-        assert_eq!(parse_duration("2013"), None);
-    }
-
-    #[test]
-    fn resized_thumbnails() {
-        let thumbs = vec![
-            Thumbnail {
-                url: "https://lh3.googleusercontent.com/abc=w60-h60-l90-rj".into(),
-                width: 60,
-                height: 60,
-            },
-            Thumbnail {
-                url: "https://lh3.googleusercontent.com/abc=w120-h120-l90-rj".into(),
-                width: 120,
-                height: 120,
-            },
-        ];
-        assert_eq!(
-            thumb_url(&thumbs, 300).as_deref(),
-            Some("https://lh3.googleusercontent.com/abc=w300-h300-l90-rj")
-        );
-        let videos = vec![
-            Thumbnail {
-                url: "https://i.ytimg.com/vi/x/hqdefault.jpg".into(),
-                width: 400,
-                height: 225,
-            },
-            Thumbnail {
-                url: "https://i.ytimg.com/vi/x/mqdefault.jpg".into(),
-                width: 320,
-                height: 180,
-            },
-        ];
-        assert_eq!(thumb_url(&videos, 200).as_deref(), Some("https://i.ytimg.com/vi/x/mqdefault.jpg"));
-        assert_eq!(thumb_url(&videos, 400).as_deref(), Some("https://i.ytimg.com/vi/x/hqdefault.jpg"));
-        assert_eq!(thumb_url(&videos, 1000).as_deref(), Some("https://i.ytimg.com/vi/x/hqdefault.jpg"));
-    }
 
     #[test]
     fn artist_joining() {
