@@ -111,7 +111,7 @@ sudo pacman -S --needed gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-g
 | `gtk4`, `libadwaita` | The interface. |
 | `gstreamer`, `gst-plugins-base`, `gst-plugins-good` | playbin3, the HTTP source, the WebM demuxer, Opus decoding, audio output. |
 | `yt-dlp`, `yt-dlp-ejs`, `deno` | Stream URLs. YouTube makes yt-dlp run JavaScript, so it needs a runtime such as Deno. |
-| `webkitgtk-6.0` | The Google sign-in window (`sloptube --music-login`). Only with the `webkit` build feature (on by default). |
+| `webkitgtk-6.0` | Google's sign-in page in the sign-in dialog. Only with the `webkit` build feature (on by default). |
 | `sqlite`, `openssl` | Importing cookies from browser profiles, and the keyring client. |
 | `gnome-keyring` *(recommended)* | Or another Secret Service provider, to store the session. Without one it goes to a private file. |
 | `gst-plugins-bad` *(optional)* | AAC decoding, for the rare song without an Opus stream. |
@@ -141,28 +141,17 @@ sloptube --music "https://music.youtube.com/playlist?list=RDCLAK5uy_n20FRYQXNt1p
 Without an account everything works except personal recommendations and the
 YouTube library; likes, saved albums and history are kept on this computer.
 
-To sign in, use the avatar button in the header or Preferences:
-
-- **Sign in with Google** opens Google's sign-in page in a separate process
-  (`sloptube --music-login`, WebKitGTK) with a throwaway in-memory session.
-  When the page lands back on YouTube, the window hands YouTube's cookies to
-  the app and closes. It doesn't read what you type.
-- **Import from a browser** copies the YouTube cookies of a Firefox, LibreWolf,
-  Zen, Floorp or Waterfox profile, or of a Chromium, Google Chrome, Brave,
-  Vivaldi or Microsoft Edge profile (decrypted with the browser's key from the
-  keyring). The copy may stop working when that browser rotates its cookies.
-
-The session is stored in the Secret Service keyring as "SlopTube Music YouTube
-session", or without a keyring in `~/.local/share/sloptube-music/session.json`
-(readable only by you). Cookies Google refreshes are saved back every minute.
-Requests are signed with `SAPISIDHASH` for `music.youtube.com`, and cookies only
-go to the domains they belong to. Until you sign in the first time, the app
-doesn't touch the keyring at all.
+Music shares SlopTube's sign-in: signing in or out in either app does so for
+both. Use the avatar button in the header or Preferences; the sign-in dialog
+and where the session is stored are described in [SlopTube's
+README](../README.md#accounts-and-privacy). Cookies Google refreshes are saved
+back every minute. Music's requests are signed with `SAPISIDHASH` for
+`music.youtube.com`, and cookies only go to the domains they belong to.
 
 Signed in, likes, dislikes, saving albums and playlists and subscribing to
 artists go to your account (and are mirrored in the local library). With *Use
 the account for audio* (on by default), yt-dlp gets the session through
-`$XDG_RUNTIME_DIR/sloptube-music/cookies.txt`, a private tmpfs file, for
+`$XDG_RUNTIME_DIR/sloptube/cookies-music.txt`, a private tmpfs file, for
 Premium quality and age-restricted songs. With *Add plays to YouTube history*
 (on by default), each song that starts playing is reported the way the website
 does it. Signing out removes the session, the cookie file and nothing else.
@@ -204,8 +193,7 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `~/.config/sloptube-music/settings.json` | Preferences and search history. |
 | `~/.local/share/sloptube-music/library.json` | Liked songs, saved albums/playlists/artists, history. |
 | `~/.local/share/sloptube-music/queue.json` | The queue, restored at startup. |
-| `~/.local/share/sloptube-music/session.json` | The session, only when no keyring is available. |
-| `$XDG_RUNTIME_DIR/sloptube-music/cookies.txt` | The session for yt-dlp, while signed in. |
+| `$XDG_RUNTIME_DIR/sloptube/cookies-music.txt` | The session for yt-dlp, while signed in (the session itself is SlopTube's, see its README). |
 
 ## How it works
 
@@ -213,20 +201,19 @@ does it. Signing out removes the session, the cookie file and nothing else.
 
 | Path | Responsibility |
 |---|---|
-| `src/api/` | InnerTube `WEB_REMIX` client, tolerant parsers, model types. |
-| `src/auth/`, `src/account.rs` | The session: cookies, `SAPISIDHASH`, keyring storage, Firefox and Chromium import; the signed-in state the UI binds to. |
+| `src/api/` | Music's InnerTube endpoints on the shared `WEB_REMIX` client core, tolerant parsers, model types. |
+| `src/account.rs` | Handing the shared session (`common::account`) to yt-dlp. |
 | `src/application.rs` | What SlopTube calls: setting up on first use, the window, links, the dialogs, and the playback hooks. |
-| `src/login_helper.rs` | `sloptube --music-login`, the sign-in window. |
 | `src/extractor.rs`, `src/ytdlp_helper.py` | Audio stream URLs through a resident yt-dlp helper (idle exit, CLI fallback, cache, shared in-flight requests). |
 | `src/player.rs` | The GStreamer player: audio-only playbin3, control thread, gapless hand-over. |
 | `src/playback.rs` | The queue: radios, autoplay, shuffle/repeat, prefetching, retries, session restore. |
 | `src/library.rs` | The local library. |
-| `src/image.rs` | Artwork at display size, LRU texture cache, dominant colours. |
+| `src/image.rs` | Dominant colours, on the shared image cache (`common::image`). |
 | `src/mpris.rs` | MPRIS. |
 | `src/ui/rows.rs` | `RowList`, the virtualised list every page is built on. |
 | `src/ui/shelf.rs`, `cards.rs`, `art.rs` | Shelves, tiles, rows, artwork and tint widgets. |
 | `src/ui/browse.rs`, `collection.rs`, `artist.rs`, `search.rs`, `library.rs` | Pages. |
-| `src/ui/login.rs` | The sign-in dialog and the account button. |
+| `src/ui/login.rs` | The shared sign-in dialog with Music's icon, and the account button. |
 | `src/ui/now_playing.rs`, `player_bar.rs`, `queue.rs`, `lyrics.rs` | Now playing and the bars (the sheet between them is `common::sheet`, shared with SlopTube). |
 | `src/ui/window.rs` | The adaptive window. |
 

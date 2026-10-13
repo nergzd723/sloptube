@@ -255,27 +255,33 @@ Media keys work too, through MPRIS.
 YouTube no longer shows a home feed to signed-out users, so without an account
 the Home tab points you to Explore and Search. Everything else works signed out.
 
-There are two ways to sign in, under the account button or in Preferences:
+SlopTube and SlopTube Music share one sign-in: signing in or out in either does
+so for both. There are two ways to sign in, under the account button or in
+Preferences:
 
 - **Sign in with Google** opens Google's sign-in page in an embedded WebKitGTK
   view with a throwaway in-memory session. When the page lands back on YouTube,
   SlopTube copies YouTube's cookies and closes the view. It does not read what
   you type.
-- **Import from a browser** copies the YouTube cookies of a Chromium, Google
-  Chrome, Brave, Vivaldi or Microsoft Edge profile, decrypting them with that
-  browser's key from the keyring. The copy may stop working when the browser
-  rotates its cookies; signing in gives SlopTube a session of its own. Firefox is
-  not supported yet.
+- **Import from a browser** copies the YouTube cookies of a Firefox, LibreWolf,
+  Zen, Floorp or Waterfox profile, or of a Chromium, Google Chrome, Brave,
+  Vivaldi or Microsoft Edge profile (decrypted with that browser's key from the
+  keyring). The copy may stop working when the browser rotates its cookies;
+  signing in gives SlopTube a session of its own.
 
 The session is stored in the Secret Service keyring (gnome-keyring, KWallet,
 …) as "SlopTube YouTube session". Without a keyring it goes to
 `~/.local/share/sloptube/session.json`, readable only by you. Signing out
-removes it.
+removes it. Until you sign in the first time, SlopTube doesn't touch the
+keyring at all. (SlopTube Music used to keep a session of its own; the first
+start that shares one adopts it if SlopTube had none and deletes it once the
+shared session works.)
 
 Cookies are only attached to requests for the domains they belong to. To let
 yt-dlp use the account, SlopTube writes them to
-`$XDG_RUNTIME_DIR/sloptube/cookies.txt` (a private tmpfs file, deleted when you
-sign out); turn off *Use account for video streams* to keep yt-dlp signed out.
+`$XDG_RUNTIME_DIR/sloptube/cookies-video.txt` (Music to `cookies-music.txt`;
+private tmpfs files, deleted when you sign out); turn off *Use account for
+video streams* to keep yt-dlp signed out.
 
 With *Add watched videos to YouTube history* on (the default), SlopTube reports
 playback progress the way the website does, so videos appear in your history and
@@ -322,7 +328,6 @@ off.
 | `--music`, `-m` | Open SlopTube Music, and any links given in it (see [SlopTube Music](#sloptube-music)). |
 | `--diagnose[=VIDEO_ID]` | Start a separate, muted instance that plays a video (Big Buck Bunny by default), prints the decoder, DMABuf use, frame rate, dropped frames and memory once a second, seeks to 1:00 after 7 seconds, saves snapshots of a frame to `$XDG_RUNTIME_DIR/sloptube/diagnose-*.png`, and quits. Settings are not saved. |
 | `--selftest` | Without opening a window: list the decoders found, then check search, the watch page, comments, a channel, a playlist, Explore, suggestions and stream extraction against YouTube. With `--music`, run SlopTube Music's self-test instead. |
-| `--music-login` | SlopTube Music's Google sign-in window, which Music starts itself. |
 
 | Environment variable | Effect |
 |---|---|
@@ -344,7 +349,8 @@ off.
 | `~/.config/sloptube/settings.json` | Preferences and search history. |
 | `~/.local/share/sloptube/positions.json` | Resume positions. |
 | `~/.local/share/sloptube/downloads.json`, `thumbnails/` | The download list and its thumbnails. |
-| `~/.local/share/sloptube/session.json` | The session, only when no keyring is available. |
+| `~/.local/share/sloptube/session.json` | The session (for both apps), only when no keyring is available. |
+| `~/.local/share/sloptube/has-session` | Whether a session is stored, so startup can skip the keyring. |
 | `~/Videos/SlopTube/` | Downloads (changeable in Preferences). |
 | `$XDG_RUNTIME_DIR/sloptube/` | The yt-dlp cookie file, generated DASH manifests and `--diagnose` snapshots. |
 | `~/.config/sloptube-music/`, `~/.local/share/sloptube-music/` | SlopTube Music's preferences, library and queue (see [its files](music/README.md#files)). |

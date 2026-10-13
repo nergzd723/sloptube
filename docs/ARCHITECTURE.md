@@ -50,24 +50,20 @@ A video goes through these steps:
 
 | Path | Responsibility |
 |---|---|
-| `src/main.rs` | Environment fixes, GStreamer init, static sink registration, `--selftest`, `--diagnose` and `--music-login`, clean exit on SIGTERM/SIGINT. |
+| `src/main.rs` | Environment fixes, GStreamer init, static sink registration, `--selftest` and `--diagnose`, clean exit on SIGTERM/SIGINT. |
 | `src/application.rs` | `AdwApplication`: startup (CSS, icons, settings, decoder ranks, stored session), the command line and `--music`, actions and accelerators, opening links, About dialog, shortcuts dialog, hosting SlopTube Music. |
 | `src/css.rs` | Limiting a stylesheet to one app's windows. |
 | `src/config.rs` | App ID and well-known directories. |
 | `src/settings.rs` | Preferences as JSON, main-thread only (on `common::prefs::Store`). |
-| `src/api/client.rs` | InnerTube HTTP client: request context, headers, authentication, cookies, endpoints. |
+| `src/api/client.rs` | SlopTube's InnerTube endpoints, on the shared `WEB` client core (`common::innertube::client`). |
 | `src/api/parse.rs` | Tolerant parsers turning InnerTube JSON into `api::model` types, and their tests. |
 | `src/api/model.rs` | Plain data types: `VideoItem`, `Item`, `FeedPage`, `VideoDetails`, `RichText`, `Comment`, ... |
-| `src/auth/mod.rs` | Cookie jar, `SAPISIDHASH`, `Set-Cookie` handling, keyring storage, the cookie file for yt-dlp. |
-| `src/auth/chromium.rs` | Finding Chromium-family profiles and decrypting their cookies. |
-| `src/account.rs` | The signed-in state as a GObject the UI binds to. |
 | `src/extractor.rs`, `src/ytdlp_helper.py` | Stream extraction through a resident yt-dlp process, with a CLI fallback and a cache. |
 | `src/player/decoders.rs` | Decoder discovery and hardware/software ranking. |
 | `src/player/formats.rs` | Stream selection and the quality menu. |
 | `src/player/dash.rs` | DASH manifests for MP4 streams. |
 | `src/player/mod.rs` | The GStreamer player: pipeline, control thread, loading, seeking, stats. |
 | `src/playback.rs` | What is playing: metadata, stream selection, queue and autoplay, retries, resume positions, watch history. |
-| `src/image.rs` | Image download, decoding at display size (WebP in-process), and the texture and file caches. |
 | `src/downloads.rs` | Downloads through the yt-dlp CLI and their index. |
 | `src/mpris.rs` | MPRIS service. |
 | `src/diagnose.rs`, `src/selftest.rs` | `--diagnose` and `--selftest`. |
@@ -79,7 +75,7 @@ A video goes through these steps:
 | `src/ui/watch.rs`, `player_view.rs`, `comments.rs` | The watch page, the video surface with its controls, comments. |
 | `src/ui/mini_player.rs` | The mini player bar (the sheet it opens is `common::sheet`). |
 | `src/ui/aspect.rs` | `AspectBin`, a height-for-width container for 16:9 content. |
-| `src/ui/login.rs`, `preferences.rs` | Sign-in dialog and Preferences. |
+| `src/ui/login.rs`, `preferences.rs` | The shared sign-in dialog with SlopTube's icon, and Preferences. |
 | `data/` | Stylesheet, icons, `.desktop` file, compiled into a GResource by `build.rs`. |
 | `tools/fetch-fixtures.py` | Downloads fresh InnerTube responses for the parser tests. |
 | `common/` | What SlopTube and Music share (`sloptube-common`, see below). |
@@ -88,6 +84,12 @@ A video goes through these steps:
 | `common/src/links.rs` | Parsing YouTube and YouTube Music links. |
 | `common/src/touch.rs` | Taps that only stop a gliding list; labels that let touch scroll. |
 | `common/src/sheet.rs` | The draggable player sheet. |
+| `common/src/innertube/` | The InnerTube client core (`WEB` and `WEB_REMIX` profiles), JSON helpers, shared model types. |
+| `common/src/session.rs` | The session in memory, which both clients sign from. |
+| `common/src/auth/` | Cookie jar, `SAPISIDHASH`, `Set-Cookie` handling, keyring storage, the cookie files for yt-dlp; Firefox and Chromium import. |
+| `common/src/account.rs` | The signed-in state as a GObject the UI binds to (one for both apps). |
+| `common/src/login.rs` | The sign-in dialog. |
+| `common/src/image.rs` | Image download, decoding at display size (WebP in-process), and the texture and file caches. |
 | `music/` | SlopTube Music, a library crate in the workspace (see [SlopTube Music](#sloptube-music)). |
 
 ## Threads and processes
@@ -127,7 +129,8 @@ each, and parse its progress lines on the main loop.
 ## Data: InnerTube
 
 InnerTube is the JSON API behind the YouTube website. `api/client.rs` talks to
-it as the desktop web client (`clientName: WEB`):
+it as the desktop web client (`clientName: WEB`), on the client core in
+`common::innertube::client` that Music's `WEB_REMIX` client shares:
 
 - **Requests** are `POST https://www.youtube.com/youtubei/v1/<endpoint>` with a
   `context` naming the client version, `hl=en`, and `gl` when a region is set.
@@ -135,12 +138,14 @@ it as the desktop web client (`clientName: WEB`):
   `https://www.youtube.com/sw.js_data`, so requests look current.
 - **Headers**: `X-Youtube-Client-Name`/`-Version`, `Origin` and `Referer`, a
   Chrome user agent, and `X-Goog-Visitor-Id` once a response has supplied
-  `visitorData`. Signed in, also `Cookie`, `Authorization` (see
+  `visitorData`. The first visitor data is kept (continuation tokens only work
+  with the one that produced them) until the identity changes. Signed in, also `Cookie`, `Authorization` (see
   [Accounts](#accounts)), `X-Goog-AuthUser: 0`, `X-Origin` and
   `X-Youtube-Bootstrap-Logged-In`.
-- **Cookies**: `Set-Cookie` headers in responses update the session and mark it
-  dirty; `Account` writes dirty sessions back to the keyring every 60 seconds,
-  so a session refreshed by Google stays valid.
+- **Cookies**: `Set-Cookie` headers in responses update the session (one for the
+  process, `common::session`, so both apps' clients keep each other's rotations)
+  and mark it dirty; `Account` writes dirty sessions back to the keyring every
+  60 seconds, so a session refreshed by Google stays valid.
 
 | Endpoint | Used for |
 |---|---|
@@ -509,12 +514,13 @@ out its child itself. The cap is set with `AspectBin::set_max_height`, which
 has the frame measured again, because GTK caches sizes per width and a window
 often changes only its height.
 
-### Images (`image.rs`)
+### Images (`common/src/image.rs`)
 
-Images are downloaded on the tokio runtime and decoded on a worker thread at
-the size they are shown, rounded up to a bucket (48, 96, 176, 256, 360, 480, 720
-or 1280 px wide, otherwise 1920), so a thumbnail costs a few hundred KB instead
-of several MB.
+Images (both apps') are downloaded on the tokio runtime and decoded on a worker
+thread at the size they are shown, rounded up to a bucket (48 to 1280 px wide,
+otherwise 1920), so a thumbnail costs a few hundred KB instead of several MB.
+Any widget implementing `ArtTarget` (pictures, avatars, Music's `ArtView`) can
+show one with `set_url`.
 
 - Most thumbnails are WebP, whatever their URL ends in (the `sqp` parameter
   picks the encoding). They are decoded with `image-webp`, because gdk-pixbuf
@@ -551,14 +557,18 @@ preference.
 
 ## Accounts
 
-`auth::Session` is a list of cookies, where they came from, and the account's
+SlopTube and Music share one Google account: signing in or out in either does
+both. `auth::Session` (`common/src/auth/`) is a list of cookies, where they came from, and the account's
 name, handle and avatar. It counts as signed in when it has a `SAPISID` (or
 `__Secure-3PAPISID`) cookie and one of the `SID` cookies. Requests are
 authorised with
 
 ```
-Authorization: SAPISIDHASH <ts>_<sha1("<ts> <SAPISID> https://www.youtube.com")>
+Authorization: SAPISIDHASH <ts>_<sha1("<ts> <SAPISID> <origin>")>
 ```
+
+where the origin is `https://www.youtube.com` for SlopTube's requests and
+`https://music.youtube.com` for Music's.
 
 followed by `SAPISID1PHASH` and `SAPISID3PHASH` values computed the same way
 from the `__Secure-1PAPISID` and `__Secure-3PAPISID` cookies when present.
@@ -566,19 +576,28 @@ from the `__Secure-1PAPISID` and `__Secure-3PAPISID` cookies when present.
 **Storage.** `auth::store` saves the session as JSON in the Secret Service
 (through oo7) with the attributes `application=io.github.nergzd.SlopTube` and
 `type=youtube-session`. Without a Secret Service it uses
-`~/.local/share/sloptube/session.json` with mode 0600.
+`~/.local/share/sloptube/session.json` with mode 0600. A marker file
+(`has-session`) says whether a session is stored, so startup without one
+doesn't wake the keyring (it may ask to be unlocked). Music stored its own
+session (`application=io.github.nergzd.SlopTubeMusic`) before the two shared
+one; `load_with_legacy` reads both over one keyring connection.
 
-**`Account`** (`account.rs`) is a GObject singleton with `signed-in`, `busy`,
-`name`, `handle` and `avatar` properties. At startup it loads the stored
-session, checks it with `account/account_menu`, and from then on saves cookies
-that Google refreshed every 60 seconds.
+**`Account`** (`common/src/account.rs`) is a GObject singleton with `signed-in`,
+`busy`, `name`, `handle` and `avatar` properties. At startup it loads the stored
+session and checks it with `account/account_menu`; if YouTube rejects it (or
+there is none), Music's old one is tried. The first accepted is kept and
+Music's old one deleted; rejected ones are deleted; on network trouble nothing
+is. From then on it saves cookies that Google refreshed every 60 seconds. Apps
+hook `connect_session_changed` (Music rewrites its yt-dlp cookie file) and
+`connect_expired` (a toast).
 
-**In-app sign-in** (`ui/login.rs`, feature `webkit`) loads Google's sign-in page
+**In-app sign-in** (`common/src/login.rs`, feature `webkit`) loads Google's sign-in page
 for YouTube in a WebKitGTK `WebView` with an ephemeral `NetworkSession`. When a
 page on `youtube.com` finishes loading, it reads all cookies from the session's
 cookie manager and, if they make a signed-in session, takes them.
 
-**Browser import** (`auth/chromium.rs`) looks for `Default` and `Profile N`
+**Browser import** (`auth/firefox.rs`) copies the `cookies.sqlite` of Firefox,
+LibreWolf, Zen, Floorp and Waterfox profiles. `auth/chromium.rs` looks for `Default` and `Profile N`
 directories of Chromium, Google Chrome, Brave, Vivaldi and Microsoft Edge. It
 copies the `Cookies` database (the browser may have it locked) and decrypts the
 values: `v10` with a key derived from the password `peanuts`, `v11` with the
@@ -610,11 +629,11 @@ it.
 SlopTube Music (`music/`, with its own [README](../music/README.md) and
 [plan](../music/docs/PLAN.md)) began as a separate program and is now a library
 crate that runs in SlopTube's process. It shares the `common` crate (runtime,
-settings store, link parsing, touch helpers, the player sheet) and some of
-SlopTube's icons. It still has its own InnerTube client (`WEB_REMIX`),
-audio-only player, queue, library, account, yt-dlp helper and image cache;
-those started as copies of SlopTube's and are being moved into `common` one by
-one. SlopTube's `Application` owns the GApplication and calls the functions in
+settings store, link parsing, touch helpers, the player sheet, the session and
+account, the InnerTube client core and JSON helpers, the image cache) and some
+of SlopTube's icons. It still has its own audio-only player, queue, library and
+yt-dlp helper; those started as copies of SlopTube's and are being moved into
+`common` one by one. SlopTube's `Application` owns the GApplication and calls the functions in
 `music/src/application.rs`:
 
 - **Opening it**: `sloptube --music` / `-m` is a GApplication option, and the
@@ -643,8 +662,8 @@ one. SlopTube's `Application` owns the GApplication and calls the functions in
   window sets its own Wayland app ID so the compositor shows Music's icon. Music
   used to cap glibc's malloc arenas; that is process-wide and would also apply to
   the video player's threads, so it no longer does.
-- **Sign-in**: Music's Google sign-in runs this binary again as `sloptube
-  --music-login`, which prints the cookies on stdout.
+- **Sign-in**: one account and one sign-in dialog for both apps (see
+  [Accounts](#accounts)).
 
 ## Testing and debugging
 

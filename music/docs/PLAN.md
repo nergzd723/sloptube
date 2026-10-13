@@ -90,7 +90,7 @@ already are.
    player and desktop bar, MPRIS, preferences, local library (liked songs,
    saved albums/playlists/artists, history).
 2. **Done**: Google account. The session in the keyring, signed requests,
-   sign-in in a separate WebKit process (now `sloptube --music-login`),
+   sign-in through Google's page (now SlopTube's shared sign-in dialog),
    Firefox and Chromium import; personalised Home, the
    YouTube Music library, likes/dislikes, saving and subscribing, Premium
    streams, plays added to history. Next: creating and editing playlists.
