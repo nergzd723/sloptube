@@ -5,6 +5,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use common::sheet::{self, Hero, PlayerSheet};
+use common::search::Search;
 use common::shell::{self, Shell};
 use gtk::{gio, glib};
 
@@ -13,7 +14,6 @@ use super::channel::ChannelPage;
 use super::feed::FeedView;
 use super::mini_player::MiniPlayer;
 use super::playlist::PlaylistPage;
-use super::search::SearchPage;
 use super::watch::WatchView;
 use super::{Nav, pages};
 use crate::account::Account;
@@ -594,14 +594,14 @@ impl Window {
     pub fn open_search(&self, query: Option<&str>) {
         self.collapse_player();
         let nav = self.current_nav();
-        if let Some(page) = nav.visible_page().and_downcast::<SearchPage>() {
+        if let Some(search) = nav.visible_page().as_ref().and_then(Search::of_page) {
             match query {
-                Some(q) => page.search(q),
-                None => page.focus_entry(),
+                Some(q) => search.search(q),
+                None => search.focus_entry(),
             }
             return;
         }
-        nav.push(&SearchPage::new(query));
+        nav.push(&super::search::search_page(query));
     }
 
     pub fn expand_player(&self) {

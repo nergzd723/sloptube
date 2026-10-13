@@ -6,6 +6,7 @@ use std::cell::{Cell, OnceCell, RefCell};
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use common::sheet::{self, Hero, PlayerSheet};
+use common::search::Search;
 use common::shell::{self, Shell};
 use gtk::{gio, glib};
 
@@ -15,7 +16,7 @@ use super::browse::BrowseView;
 use super::collection::collection_page;
 use super::now_playing::NowPlayingView;
 use super::player_bar::PlayerBar;
-use super::search::{SearchView, search_page};
+use super::search::search_page;
 use super::{LocalList, Nav, page};
 use crate::api::{BrowseTarget, CardKind, PageKind};
 use crate::config;
@@ -613,33 +614,17 @@ impl Window {
         }
     }
 
-    fn visible_search(&self) -> Option<SearchView> {
-        let page = self.current_nav().visible_page()?;
-        if page.tag().as_deref() != Some("search") {
-            return None;
-        }
-        page.child()
-            .and_downcast::<adw::ToolbarView>()?
-            .content()
-            .and_downcast::<SearchView>()
-    }
-
     pub fn open_search(&self, query: Option<&str>) {
         self.collapse_player();
-        if let Some(view) = self.visible_search() {
+        let nav = self.current_nav();
+        if let Some(search) = nav.visible_page().as_ref().and_then(Search::of_page) {
             match query {
-                Some(q) => view.search(q),
-                None => {
-                    view.entry().grab_focus();
-                }
+                Some(q) => search.search(q),
+                None => search.focus_entry(),
             }
             return;
         }
-        let (page, view) = search_page();
-        self.current_nav().push(&page);
-        if let Some(q) = query {
-            view.search(q);
-        }
+        nav.push(&search_page(query));
     }
 
     pub fn expand_player(&self) {

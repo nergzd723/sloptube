@@ -452,6 +452,9 @@ progressbar.mini-progress > trough > progress {
   padding: 4px 12px;
   min-height: 40px;
 }
+.fill-arrow image {
+  -gtk-icon-transform: rotate(-45deg);
+}
 .download-row {
   padding: 8px 10px;
 }

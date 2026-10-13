@@ -18,6 +18,7 @@ pub mod paths;
 pub mod preferences;
 pub mod prefs;
 pub mod runtime;
+pub mod search;
 pub mod session;
 pub mod shell;
 pub mod sheet;
