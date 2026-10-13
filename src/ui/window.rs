@@ -248,43 +248,37 @@ impl Window {
             row.set_child(Some(&b));
             imp.sidebar_nav.append(&row);
         }
+        // The selection only mirrors the visible tab. GTK also selects rows when focus
+        // moves into the sidebar, as it does when the player collapses and hides the
+        // focused button, so tabs switch on activation (a tap or Enter) instead.
         imp.sidebar_nav.connect_row_selected(glib::clone!(
             #[weak(rename_to = win)]
             self,
+            move |_, _| {
+                if !win.imp().syncing_sidebar.get() {
+                    win.sync_sidebar();
+                }
+            }
+        ));
+        imp.sidebar_nav.connect_row_activated(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
             move |_, row| {
-                if win.imp().syncing_sidebar.get() {
-                    return;
+                let name = row.widget_name();
+                if win.imp().stack.visible_child_name().as_deref() == Some(name.as_str()) {
+                    // Tapping the tab that is showing returns to its root.
+                    win.current_nav().pop_to_tag(&name);
                 }
-                if let Some(row) = row {
-                    let name = row.widget_name();
-                    if win.imp().stack.visible_child_name().as_deref() == Some(name.as_str()) {
-                        // Re-selecting a tab returns to its root.
-                        win.current_nav().pop_to_tag(&name);
-                    }
-                    win.imp().stack.set_visible_child_name(&name);
-                    win.collapse_player();
-                }
+                win.imp().stack.set_visible_child_name(&name);
+                win.collapse_player();
             }
         ));
         imp.stack.connect_visible_child_name_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            move |stack| {
-                let imp = win.imp();
-                let name = stack.visible_child_name().unwrap_or_default();
-                imp.syncing_sidebar.set(true);
-                let mut child = imp.sidebar_nav.first_child();
-                while let Some(c) = child {
-                    if let Some(row) = c.downcast_ref::<gtk::ListBoxRow>() {
-                        if row.widget_name() == name {
-                            imp.sidebar_nav.select_row(Some(row));
-                        }
-                    }
-                    child = c.next_sibling();
-                }
-                imp.syncing_sidebar.set(false);
-            }
+            move |_| win.sync_sidebar()
         ));
+        self.sync_sidebar();
         imp.sidebar_subs.add_css_class("navigation-sidebar");
         imp.sidebar_subs.set_selection_mode(gtk::SelectionMode::None);
         imp.sidebar_subs.connect_row_activated(|list, row| {
@@ -639,6 +633,23 @@ impl Window {
         action("expand-player", |w| w.expand_player());
         action("refresh", |w| w.refresh());
         action("play-pause", |w| w.playback().toggle());
+    }
+
+    /// Select the visible tab's row in the sidebar.
+    fn sync_sidebar(&self) {
+        let imp = self.imp();
+        let name = imp.stack.visible_child_name().unwrap_or_default();
+        imp.syncing_sidebar.set(true);
+        let mut child = imp.sidebar_nav.first_child();
+        while let Some(c) = child {
+            if let Some(row) = c.downcast_ref::<gtk::ListBoxRow>() {
+                if row.widget_name() == name {
+                    imp.sidebar_nav.select_row(Some(row));
+                }
+            }
+            child = c.next_sibling();
+        }
+        imp.syncing_sidebar.set(false);
     }
 
     fn current_nav(&self) -> adw::NavigationView {

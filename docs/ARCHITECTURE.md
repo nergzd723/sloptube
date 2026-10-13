@@ -390,7 +390,11 @@ Breakpoints:
 Pages are pushed onto the current tab's `AdwNavigationView` by
 `ui::navigate(widget, Nav::...)`, which also handles videos (they open the
 sheet), and is what `sloptube:` links and command-line URLs end up calling.
-Selecting the current tab again in the sidebar pops back to its root.
+Sidebar tabs switch when a row is activated (a tap, click or Enter), and
+activating the current tab again pops back to its root. The row selection only
+mirrors the visible tab: GTK also selects a row whenever focus moves into the
+sidebar, as when the player collapses and hides the focused button, so acting
+on `row-selected` popped pages nobody asked to leave.
 
 Pages that are off screen (the other tabs, and pages under the current one) have
 their content hidden until they are mapped again (`hide_content_while_unmapped`
