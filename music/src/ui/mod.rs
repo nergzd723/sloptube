@@ -21,6 +21,7 @@ pub mod shelf;
 pub mod window;
 
 use adw::prelude::*;
+use common::links::{self, Link};
 use gtk::gio;
 
 use crate::api::{BrowseTarget, PageKind, WatchTarget};
@@ -140,43 +141,18 @@ pub fn clear(container: &impl IsA<gtk::Widget>) {
 
 /// Map music.youtube.com / youtube.com / youtu.be links to in-app navigation.
 pub fn nav_for_url(url: &str) -> Option<Nav> {
-    let u = url::Url::parse(url.trim()).ok()?;
-    let host = u.host_str()?.trim_start_matches("www.").trim_start_matches("m.");
-    let query = |k: &str| u.query_pairs().find(|(kk, _)| kk == k).map(|(_, v)| v.into_owned());
-    let path = u.path();
-    match host {
-        "youtu.be" => {
-            let id = path.trim_start_matches('/');
-            (!id.is_empty()).then(|| {
-                Nav::Play(WatchTarget {
-                    video_id: Some(id.to_owned()),
-                    playlist_id: query("list"),
-                    params: None,
-                })
-            })
-        }
-        "youtube.com" | "music.youtube.com" => {
-            if path == "/watch" {
-                Some(Nav::Play(WatchTarget {
-                    video_id: query("v"),
-                    playlist_id: query("list"),
-                    params: None,
-                }))
-                .filter(|n| matches!(n, Nav::Play(t) if t.video_id.is_some() || t.playlist_id.is_some()))
-            } else if path == "/playlist" {
-                let list = query("list")?;
-                Some(Nav::Page(BrowseTarget::new(format!("VL{list}")), String::new()))
-            } else if let Some(id) = path.strip_prefix("/browse/").or_else(|| path.strip_prefix("/channel/")) {
-                let id = id.split('/').next()?;
-                Some(Nav::Page(BrowseTarget::new(id), String::new()))
-            } else if path == "/search" || path == "/results" {
-                Some(Nav::Search(query("q").or_else(|| query("search_query"))?))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+    Some(match links::parse(url)? {
+        Link::Watch { video, playlist, .. } => Nav::Play(WatchTarget {
+            video_id: video,
+            playlist_id: playlist,
+            params: None,
+        }),
+        Link::Playlist(list) => Nav::Page(BrowseTarget::new(format!("VL{list}")), String::new()),
+        // Handles and custom URLs only resolve on youtube.com.
+        Link::Channel(id) if !id.starts_with("UC") => return None,
+        Link::Channel(id) | Link::Browse(id) => Nav::Page(BrowseTarget::new(id), String::new()),
+        Link::Search(q) => Nav::Search(q),
+    })
 }
 
 /// A shareable link for a browse target.

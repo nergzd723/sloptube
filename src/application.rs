@@ -114,7 +114,7 @@ mod imp {
             let app = self.obj();
             // `--music` opens every link in Music, otherwise only music.youtube.com links.
             let (music, videos): (Vec<gio::File>, Vec<gio::File>) =
-                files.iter().cloned().partition(|f| hint == "music" || is_music_link(&f.uri()));
+                files.iter().cloned().partition(|f| hint == "music" || common::links::is_music(&f.uri()));
             if !music.is_empty() {
                 sloptube_music::open(app.upcast_ref(), &music);
             }
@@ -328,11 +328,6 @@ impl Default for Application {
 }
 
 /// Load a stylesheet from the resources for the windows with the CSS class `scope` only.
-/// A music.youtube.com link (opened in Music even without `--music`).
-fn is_music_link(uri: &str) -> bool {
-    url::Url::parse(uri).is_ok_and(|u| u.host_str() == Some("music.youtube.com"))
-}
-
 fn add_window_stylesheet(display: &gdk::Display, resource: &str, scope: &str) {
     let css = match gio::resources_lookup_data(resource, gio::ResourceLookupFlags::NONE) {
         Ok(data) => crate::css::scoped(&String::from_utf8_lossy(&data), scope),

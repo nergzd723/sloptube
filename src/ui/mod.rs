@@ -19,6 +19,7 @@ pub mod watch;
 pub mod window;
 
 use adw::prelude::*;
+use common::links::{self, Link};
 use gtk::{gio, glib};
 
 use crate::api::{LinkTarget, RichText, TextLink, VideoItem};
@@ -183,55 +184,31 @@ pub fn activate_link(widget: &impl IsA<gtk::Widget>, uri: &str) -> glib::Propaga
 
 /// Map youtube.com / youtu.be links to in-app navigation.
 pub fn nav_for_youtube_url(url: &str) -> Option<Nav> {
-    let u = url::Url::parse(url.trim()).ok()?;
-    let host = u.host_str()?.trim_start_matches("www.").trim_start_matches("m.");
-    let query = |k: &str| u.query_pairs().find(|(kk, _)| kk == k).map(|(_, v)| v.into_owned());
-    let start = query("t").and_then(|t| t.trim_end_matches('s').parse::<f64>().ok());
-    match host {
-        "youtu.be" => {
-            let id = u.path().trim_start_matches('/');
-            (!id.is_empty()).then(|| Nav::Video {
-                item: VideoItem {
-                    id: id.to_owned(),
-                    ..Default::default()
-                },
-                playlist: query("list"),
-                start,
-            })
+    Some(match links::parse(url)? {
+        Link::Watch {
+            video: Some(id),
+            playlist,
+            start,
+        } => Nav::Video {
+            item: VideoItem {
+                id,
+                ..Default::default()
+            },
+            playlist,
+            start,
+        },
+        Link::Watch {
+            video: None,
+            playlist: Some(list),
+            ..
         }
-        "youtube.com" | "music.youtube.com" => {
-            let path = u.path();
-            if path == "/watch" {
-                let id = query("v")?;
-                Some(Nav::Video {
-                    item: VideoItem {
-                        id,
-                        ..Default::default()
-                    },
-                    playlist: query("list"),
-                    start,
-                })
-            } else if let Some(id) = path.strip_prefix("/shorts/").or_else(|| path.strip_prefix("/live/")) {
-                Some(Nav::video_id(id.trim_end_matches('/')))
-            } else if path == "/playlist" {
-                Some(Nav::Playlist(query("list")?))
-            } else if let Some(id) = path.strip_prefix("/channel/") {
-                Some(Nav::Channel(id.split('/').next()?.to_owned()))
-            } else if path.starts_with("/@") {
-                Some(Nav::Channel(path.trim_start_matches('/').split('/').next()?.to_owned()))
-            } else if path.starts_with("/c/") || path.starts_with("/user/") {
-                // Older custom and user URLs; `channel()` resolves them like handles.
-                let mut parts = path.trim_start_matches('/').split('/');
-                let (kind, name) = (parts.next()?, parts.next().filter(|n| !n.is_empty())?);
-                Some(Nav::Channel(format!("{kind}/{name}")))
-            } else if path == "/results" {
-                Some(Nav::Search(query("search_query")?))
-            } else {
-                None
-            }
-        }
-        _ => None,
-    }
+        | Link::Playlist(list) => Nav::Playlist(list),
+        Link::Watch { .. } => return None,
+        Link::Channel(id) => Nav::Channel(id),
+        Link::Browse(id) if id.starts_with("UC") => Nav::Channel(id),
+        Link::Browse(id) => Nav::Playlist(id.strip_prefix("VL")?.to_owned()),
+        Link::Search(q) => Nav::Search(q),
+    })
 }
 
 /// A label with rich text that routes link clicks into the app.

@@ -4,6 +4,7 @@
 //! Nothing here reads either app's settings; what differs between the apps
 //! is passed in.
 
+pub mod links;
 pub mod memory;
 pub mod paths;
 pub mod prefs;
