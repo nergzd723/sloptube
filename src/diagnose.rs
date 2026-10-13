@@ -54,16 +54,8 @@ fn snapshot_png(win: &Window, paintable: &gtk::gdk::Paintable, dir: &std::path::
 }
 
 fn rss_mb() -> String {
-    let status = std::fs::read_to_string("/proc/self/status").unwrap_or_default();
-    let get = |key: &str| {
-        status
-            .lines()
-            .find(|l| l.starts_with(key))
-            .and_then(|l| l.split_whitespace().nth(1)?.parse::<u64>().ok())
-            .map(|kb| kb / 1024)
-            .unwrap_or(0)
-    };
-    format!("{}MB(anon {} file {})", get("VmRSS:"), get("RssAnon:"), get("RssFile:"))
+    let (total, anon, file) = common::memory::rss_mb().unwrap_or_default();
+    format!("{total}MB(anon {anon} file {file})")
 }
 
 pub fn start(win: &Window) {

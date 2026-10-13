@@ -2761,10 +2761,23 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sloptube-common",
  "sloptube-music",
  "tokio",
  "url",
  "webkit6",
+]
+
+[[package]]
+name = "sloptube-common"
+version = "0.1.0"
+dependencies = [
+ "gtk4",
+ "libc",
+ "log",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -2780,7 +2793,6 @@ dependencies = [
  "gtk4",
  "hex",
  "libadwaita",
- "libc",
  "log",
  "mpris-server",
  "oo7",
@@ -2791,6 +2803,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sloptube-common",
  "tokio",
  "url",
  "webkit6",

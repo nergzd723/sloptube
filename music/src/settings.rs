@@ -1,8 +1,6 @@
 //! User preferences, persisted as JSON in the config directory.
 
-use std::cell::RefCell;
-use std::path::PathBuf;
-
+use common::prefs::{self, Store};
 use serde::{Deserialize, Serialize};
 
 use crate::config;
@@ -91,50 +89,22 @@ impl Default for Settings {
     }
 }
 
-fn path() -> PathBuf {
-    config::config_dir().join("settings.json")
-}
-
-fn load() -> Settings {
-    std::fs::read(path())
-        .ok()
-        .and_then(|d| serde_json::from_slice(&d).ok())
-        .unwrap_or_default()
-}
-
 thread_local! {
-    static SETTINGS: RefCell<Settings> = RefCell::new(load());
+    static SETTINGS: Store<Settings> = Store::load(config::config_dir().join("settings.json"));
 }
 
 /// A snapshot of the current settings (main thread only).
 pub fn get() -> Settings {
-    SETTINGS.with(|s| s.borrow().clone())
+    SETTINGS.with(Store::get)
 }
 
 /// Modify and persist settings (main thread only).
 pub fn update(f: impl FnOnce(&mut Settings)) {
-    SETTINGS.with(|s| {
-        let mut s = s.borrow_mut();
-        f(&mut s);
-        match serde_json::to_vec_pretty(&*s) {
-            Ok(data) => {
-                if let Err(e) = config::write_atomic(&path(), &data) {
-                    log::warn!("failed to save settings: {e}");
-                }
-            }
-            Err(e) => log::warn!("failed to serialize settings: {e}"),
-        }
-    });
+    SETTINGS.with(|s| s.update(f));
 }
 
 pub fn add_search_history(query: &str) {
-    let q = query.trim();
-    if q.is_empty() || !get().save_search_history {
-        return;
+    if get().save_search_history {
+        update(|s| prefs::remember_search(&mut s.search_history, query));
     }
-    update(|s| {
-        s.search_history.retain(|h| !h.eq_ignore_ascii_case(q));
-        s.search_history.insert(0, q.to_owned());
-        s.search_history.truncate(30);
-    });
 }

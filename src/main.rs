@@ -11,11 +11,11 @@ mod image;
 mod mpris;
 mod playback;
 mod player;
-mod runtime;
 mod selftest;
 mod settings;
 mod ui;
 
+use common::runtime;
 use gtk::prelude::*;
 use gtk::{gio, glib};
 

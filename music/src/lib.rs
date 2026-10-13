@@ -17,14 +17,14 @@ mod image;
 mod library;
 #[cfg(all(feature = "webkit", target_os = "linux"))]
 pub mod login_helper;
-mod memory;
 mod mpris;
 mod playback;
 mod player;
-mod runtime;
 mod selftest;
 mod settings;
 mod ui;
+
+use common::{memory, runtime};
 
 pub use application::*;
 

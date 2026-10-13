@@ -1,0 +1,15 @@
+[package]
+name = "sloptube-common"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.96"
+description = "What SlopTube and SlopTube Music share"
+license = "GPL-3.0-or-later"
+
+[dependencies]
+gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
+tokio = { version = "1", features = ["rt-multi-thread", "time"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+log = "0.4"
+libc = "0.2"

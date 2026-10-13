@@ -7,7 +7,7 @@ description = "A lightweight native YouTube client for Linux (GTK4/libadwaita + 
 license = "GPL-3.0-or-later"
 
 [workspace]
-members = ["music"]
+members = ["common", "music"]
 
 [features]
 default = ["webkit", "static-sink"]
@@ -17,6 +17,8 @@ webkit = ["dep:webkit", "sloptube-music/webkit"]
 static-sink = ["dep:gst-plugin-gtk4"]
 
 [dependencies]
+# What SlopTube and SlopTube Music share
+common = { package = "sloptube-common", path = "common" }
 # SlopTube Music, which runs in the same process (`sloptube --music`)
 sloptube-music = { path = "music", default-features = false }
 
