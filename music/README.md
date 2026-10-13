@@ -3,8 +3,10 @@
 A lightweight native YouTube Music client for Linux, written in Rust with
 GTK 4 and libadwaita. It looks and works like the YouTube Music phone app on a
 phone, and like music.youtube.com on a desktop, adapting as the window is
-resized. A sibling of [SlopTube](https://github.com/nergzd723/sloptube), sharing its approach: InnerTube
-for data, yt-dlp for streams, GStreamer for playback.
+resized. It is part of [SlopTube](../README.md) and runs in SlopTube's process
+(`sloptube --music`, or **Open SlopTube Music** in SlopTube's account menu),
+sharing its approach: InnerTube for data, yt-dlp for streams, GStreamer for
+playback.
 
 > [!WARNING]
 > SlopTube Music is vibecoded: it was written largely by an AI coding
@@ -15,8 +17,8 @@ for data, yt-dlp for streams, GStreamer for playback.
 The YouTube Music website is a heavy web app. SlopTube Music keeps what matters
 and does it natively, with memory use as the first concern:
 
-- GTK and libadwaita instead of a browser; the player never loads WebKit (the
-  Google sign-in window is a separate, short-lived program);
+- GTK and libadwaita instead of a browser (the Google sign-in window is a
+  separate, short-lived process);
 - audio only: one `playbin3` with video disabled, Opus streams, small buffers;
 - every list is virtualised (a `GtkListView` of shelves, songs, the queue);
 - artwork is requested from Google's image servers at the size it is shown and
@@ -26,10 +28,11 @@ and does it natively, with memory use as the first concern:
 - the yt-dlp helper (a Python process, 55–80 MB) only runs while needed and
   exits after five idle minutes.
 
-The release build uses about **93 MB** of resident memory idle on Home and
-**117 MB** while playing, of which roughly 35 MB and 50 MB are the app's own
-memory; the rest is shared libraries. (Measured on aarch64 under GTK's
-Broadway backend; a Wayland session adds the GL driver's libraries.)
+As a separate program, the release build used about **93 MB** of resident
+memory idle on Home and **117 MB** while playing, of which roughly 35 MB and
+50 MB were the app's own memory; the rest was shared libraries. (Measured on
+aarch64 under GTK's Broadway backend, before it moved into SlopTube's process,
+where those libraries are shared with SlopTube.)
 
 ## Features
 
@@ -66,7 +69,10 @@ Broadway backend; a Wayland session adds the GL driver's libraries.)
   press play.
 - **MPRIS**: media keys and desktop media controls, including shuffle and
   loop status. **Background playback** after closing the window.
-- Opens `music.youtube.com`, `youtube.com` and `youtu.be` links.
+- Opens `music.youtube.com` links (from anywhere), and `youtube.com` and
+  `youtu.be` links given with `sloptube --music`.
+- **Runs alongside SlopTube**: both windows can be open at once, and when one
+  starts playing the other pauses.
 
 ## Status
 
@@ -91,8 +97,9 @@ through GTK's Broadway backend, with audio sent to a silent sink:
 
 ## Requirements
 
-GTK 4.18 or newer, libadwaita 1.7 or newer, GStreamer 1.24 or newer, and
-yt-dlp with a JavaScript runtime. On Arch Linux:
+SlopTube's [requirements](../README.md#requirements) cover Music: GTK 4.18 or
+newer, libadwaita 1.7 or newer, GStreamer 1.24 or newer, and yt-dlp with a
+JavaScript runtime. On Arch Linux:
 
 ```sh
 sudo pacman -S --needed gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-good \
@@ -104,40 +111,29 @@ sudo pacman -S --needed gtk4 libadwaita gstreamer gst-plugins-base gst-plugins-g
 | `gtk4`, `libadwaita` | The interface. |
 | `gstreamer`, `gst-plugins-base`, `gst-plugins-good` | playbin3, the HTTP source, the WebM demuxer, Opus decoding, audio output. |
 | `yt-dlp`, `yt-dlp-ejs`, `deno` | Stream URLs. YouTube makes yt-dlp run JavaScript, so it needs a runtime such as Deno. |
-| `webkitgtk-6.0` | The Google sign-in window (`sloptube-music-login`). Only with the `webkit` build feature (on by default). |
+| `webkitgtk-6.0` | The Google sign-in window (`sloptube --music-login`). Only with the `webkit` build feature (on by default). |
 | `sqlite`, `openssl` | Importing cookies from browser profiles, and the keyring client. |
 | `gnome-keyring` *(recommended)* | Or another Secret Service provider, to store the session. Without one it goes to a private file. |
 | `gst-plugins-bad` *(optional)* | AAC decoding, for the rare song without an Opus stream. |
 
-Building needs Rust 1.96 or newer and `pkgconf`.
-
 ## Building and running
+
+Music is built with SlopTube, from the repository root:
 
 ```sh
 cargo build --release
-./target/release/sloptube-music
+./target/release/sloptube --music
 ```
 
-This builds two programs: `sloptube-music`, and `sloptube-music-login`, the
-Google sign-in window it starts when needed (found next to `sloptube-music` or
-on `PATH`). `cargo build --release --no-default-features` skips the sign-in
-window and WebKitGTK; signing in then works only by importing a browser session.
-
-To install for your user:
-
-```sh
-install -Dm755 target/release/sloptube-music ~/.local/bin/sloptube-music
-install -Dm755 target/release/sloptube-music-login ~/.local/bin/sloptube-music-login
-install -Dm644 data/io.github.nergzd.SlopTubeMusic.desktop -t ~/.local/share/applications/
-install -Dm644 data/icons/scalable/apps/io.github.nergzd.SlopTubeMusic.svg -t ~/.local/share/icons/hicolor/scalable/apps/
-install -Dm644 data/icons/scalable/apps/io.github.nergzd.SlopTubeMusic-symbolic.svg -t ~/.local/share/icons/hicolor/symbolic/apps/
-```
+[SlopTube's README](../README.md#building-and-installing) shows how to install
+it, including Music's desktop file and icons. Built without the `webkit`
+feature, signing in works only by importing a browser session.
 
 Links can be passed on the command line, and go to the running instance:
 
 ```sh
-sloptube-music https://music.youtube.com/watch?v=4D7u5KF7SP8
-sloptube-music "https://music.youtube.com/playlist?list=RDCLAK5uy_n20FRYQXNt1p1wS55Nj2r14IouO5weaYU"
+sloptube https://music.youtube.com/watch?v=4D7u5KF7SP8
+sloptube --music "https://music.youtube.com/playlist?list=RDCLAK5uy_n20FRYQXNt1p1wS55Nj2r14IouO5weaYU"
 ```
 
 ## Accounts and privacy
@@ -147,11 +143,10 @@ YouTube library; likes, saved albums and history are kept on this computer.
 
 To sign in, use the avatar button in the header or Preferences:
 
-- **Sign in with Google** opens Google's sign-in page in a separate window
-  (`sloptube-music-login`, WebKitGTK) with a throwaway in-memory session. When
-  the page lands back on YouTube, the window hands YouTube's cookies to the app
-  and closes. It doesn't read what you type, and the player itself never loads
-  WebKit.
+- **Sign in with Google** opens Google's sign-in page in a separate process
+  (`sloptube --music-login`, WebKitGTK) with a throwaway in-memory session.
+  When the page lands back on YouTube, the window hands YouTube's cookies to
+  the app and closes. It doesn't read what you type.
 - **Import from a browser** copies the YouTube cookies of a Firefox, LibreWolf,
   Zen, Floorp or Waterfox profile, or of a Chromium, Google Chrome, Brave,
   Vivaldi or Microsoft Edge profile (decrypted with the browser's key from the
@@ -194,12 +189,11 @@ does it. Signing out removes the session, the cookie file and nothing else.
 
 | | Effect |
 |---|---|
-| `--selftest` | Without a window: check home, continuations, chips, explore, search and its continuation, suggestions, an album, an artist, a playlist, a radio and its continuation, lyrics, related, and two extractions, printing what came back and the memory used; with a stored session, also the account, the signed-in Home and each library section (names and counts only). |
-| `RUST_LOG` | Log filter, `sloptube_music=info` by default; `sloptube_music=debug` logs every request with its time. |
+| `sloptube --music --selftest` | Without a window: check home, continuations, chips, explore, search and its continuation, suggestions, an album, an artist, a playlist, a radio and its continuation, lyrics, related, and two extractions, printing what came back and the memory used; with a stored session, also the account, the signed-in Home and each library section (names and counts only). |
+| `RUST_LOG` | Log filter, `sloptube=info,sloptube_music=info` by default; `sloptube_music=debug` logs every request with its time. |
 | `SLOPTUBE_MUSIC_WINDOW_SIZE` | Initial window size, e.g. `390x844` for the phone layout. |
 | `SLOPTUBE_MUSIC_HELPER_IDLE` | Seconds before the idle yt-dlp helper exits (300; 0 keeps it running). |
 | `SLOPTUBE_MUSIC_YTDLP`, `SLOPTUBE_MUSIC_YTDLP_PYTHON` | The yt-dlp to use, and the Python for its helper. |
-| `SLOPTUBE_MUSIC_LOGIN` | Path of the sign-in window program. |
 | `SLOPTUBE_MUSIC_AUDIO_SINK` | A GStreamer audio sink to use instead of the default, e.g. `fakesink` to test silently. |
 | `SLOPTUBE_MUSIC_FIXTURES` | Directory of saved responses for the parser tests (see below). |
 
@@ -221,7 +215,8 @@ does it. Signing out removes the session, the cookie file and nothing else.
 |---|---|
 | `src/api/` | InnerTube `WEB_REMIX` client, tolerant parsers, model types. |
 | `src/auth/`, `src/account.rs` | The session: cookies, `SAPISIDHASH`, keyring storage, Firefox and Chromium import; the signed-in state the UI binds to. |
-| `src/bin/login.rs` | `sloptube-music-login`, the sign-in window. |
+| `src/application.rs` | What SlopTube calls: setting up on first use, the window, links, the dialogs, and the playback hooks. |
+| `src/login_helper.rs` | `sloptube --music-login`, the sign-in window. |
 | `src/extractor.rs`, `src/ytdlp_helper.py` | Audio stream URLs through a resident yt-dlp helper (idle exit, CLI fallback, cache, shared in-flight requests). |
 | `src/player.rs` | The GStreamer player: audio-only playbin3, control thread, gapless hand-over. |
 | `src/playback.rs` | The queue: radios, autoplay, shuffle/repeat, prefetching, retries, session restore. |
@@ -237,15 +232,17 @@ does it. Signing out removes the session, the cookie file and nothing else.
 
 ## Development
 
+From the repository root:
+
 ```sh
-tools/fetch-fixtures.py target/fixtures
-SLOPTUBE_MUSIC_FIXTURES=target/fixtures cargo test
-cargo run -- --selftest
+music/tools/fetch-fixtures.py target/music-fixtures
+SLOPTUBE_MUSIC_FIXTURES=target/music-fixtures cargo test -p sloptube-music
+cargo run -- --music --selftest
 ```
 
 For screenshots without a session, GTK's Broadway backend shows the app in a
-browser (`gtk4-broadwayd :7`, then run with `GDK_BACKEND=broadway
-BROADWAY_DISPLAY=:7` and open http://localhost:8087).
+browser (`gtk4-broadwayd :7`, then run `sloptube --music` with
+`GDK_BACKEND=broadway BROADWAY_DISPLAY=:7` and open http://localhost:8087).
 
 ## Known limitations
 

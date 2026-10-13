@@ -50,8 +50,9 @@ A video goes through these steps:
 
 | Path | Responsibility |
 |---|---|
-| `src/main.rs` | Environment fixes, GStreamer init, static sink registration, `--selftest` and `--diagnose` flags. |
-| `src/application.rs` | `AdwApplication`: startup (CSS, icons, settings, decoder ranks, stored session), actions and accelerators, opening links, About dialog, shortcuts dialog. |
+| `src/main.rs` | Environment fixes, GStreamer init, static sink registration, `--selftest`, `--diagnose` and `--music-login`, clean exit on SIGTERM/SIGINT. |
+| `src/application.rs` | `AdwApplication`: startup (CSS, icons, settings, decoder ranks, stored session), the command line and `--music`, actions and accelerators, opening links, About dialog, shortcuts dialog, hosting SlopTube Music. |
+| `src/css.rs` | Limiting a stylesheet to one app's windows. |
 | `src/config.rs` | App ID and well-known directories. |
 | `src/settings.rs` | Preferences as JSON, main-thread only. |
 | `src/runtime.rs` | The tokio runtime and the bridge from GLib futures. |
@@ -82,6 +83,7 @@ A video goes through these steps:
 | `src/ui/login.rs`, `preferences.rs` | Sign-in dialog and Preferences. |
 | `data/` | Stylesheet, icons, `.desktop` file, compiled into a GResource by `build.rs`. |
 | `tools/fetch-fixtures.py` | Downloads fresh InnerTube responses for the parser tests. |
+| `music/` | SlopTube Music, a library crate in the workspace (see [SlopTube Music](#sloptube-music)). |
 
 ## Threads and processes
 
@@ -527,6 +529,12 @@ of several MB.
 ### Styling
 
 `data/style.css` and the icons are compiled into a GResource by `build.rs`.
+GTK applies a stylesheet to every window of the display, and SlopTube Music
+shares the process, so `css::scoped` rewrites the stylesheet at load time:
+every selector is put under `window.sloptube` (`:root` becomes that window,
+`window.phone …` becomes `window.sloptube.phone …`). Popovers and dialogs are
+inside their window's CSS tree, so they are covered. Write the stylesheet as
+if SlopTube were alone.
 libadwaita loads no stylesheet at all when `GTK_THEME` is set, and some setups
 set `GTK_THEME=Adwaita:dark` globally, so `main.rs` removes `GTK_THEME=Adwaita`
 and `Adwaita:*` from the process environment and keeps only the dark
@@ -588,12 +596,54 @@ something plays, with the setting on, hides the window and sends a
 notification instead of quitting. MPRIS Raise or launching SlopTube again shows
 it.
 
+## SlopTube Music
+
+SlopTube Music (`music/`, with its own [README](../music/README.md) and
+[plan](../music/docs/PLAN.md)) began as a separate program and is now a library
+crate that runs in SlopTube's process. It has its own InnerTube client
+(`WEB_REMIX`), audio-only player, queue, library, account, yt-dlp helper and
+image cache; those started as copies of SlopTube's and have not been merged
+back. SlopTube's `Application` owns the GApplication and calls the functions in
+`music/src/application.rs`:
+
+- **Opening it**: `sloptube --music` / `-m` is a GApplication option, and the
+  application handles its command line (`HANDLES_COMMAND_LINE`), so a second
+  launch forwards `--music` and its links to the running instance.
+  `music.youtube.com` links go to Music without the flag. The menus have
+  `app.show-music` and `app.show-videos`.
+- **Lazily**: nothing of Music runs until its window is first opened; then it
+  loads its session, restores its queue (paused) and registers its MPRIS player.
+- **Shared actions**: `app.preferences`, `app.about` and `app.shortcuts` act for
+  the app whose window is active, since both apps' menus use those names.
+  `app.quit` (Ctrl+Q) quits both; MPRIS *Quit* destroys only that app's windows.
+  Window actions (`win.search`, ...) are per window anyway, and accelerators
+  for actions a window doesn't have do nothing there.
+- **MPRIS**: each app has its own player (`io.github.nergzd.SlopTube` and
+  `...SlopTubeMusic`). SlopTube's playback belongs to its window, so each new
+  SlopTube window registers a new MPRIS player; the old one goes away with its
+  window. Music's playback is a singleton that outlives its window.
+- **Playing one at a time**: when either player reaches `Playing`, the other is
+  paused (`sloptube_music::connect_started_playing` and `sloptube_music::pause`).
+  Reacting to the actual state, not the intent, keeps the music going while a
+  video loads.
+- **Process-wide state**: the colour scheme (`AdwStyleManager`) is one per
+  process, so Music follows SlopTube's Appearance setting. Music's stylesheet is
+  scoped to `window.stmusic` like SlopTube's (see [Styling](#styling)), and its
+  window sets its own Wayland app ID so the compositor shows Music's icon. Music
+  used to cap glibc's malloc arenas; that is process-wide and would also apply to
+  the video player's threads, so it no longer does. Music's tokio runtime
+  (`stmusic-io`, two workers) is separate from SlopTube's.
+- **Sign-in**: Music's Google sign-in runs this binary again as `sloptube
+  --music-login`, which prints the cookies on stdout.
+
 ## Testing and debugging
 
 ### Unit and parser tests
 
 `cargo test` runs the unit tests (stream selection, DASH manifests, cookie and
-date parsing, rich text, ...). The parser tests need real responses and are
+date parsing, rich text, stylesheet scoping, ...); `cargo test --workspace` adds
+SlopTube Music's (see its README for its fixtures). The parser tests need real
+responses and are
 skipped unless `SLOPTUBE_FIXTURES` names a directory with them:
 
 ```sh

@@ -38,13 +38,13 @@ jobs:
         run: cargo build --locked
 
       - name: Test
-        run: cargo test --locked
+        run: cargo test --locked --workspace
 
       - name: Build without WebKit
         run: cargo check --locked --no-default-features --features static-sink
 
       - name: Clippy
-        run: cargo clippy --locked --all-targets
+        run: cargo clippy --locked --workspace --all-targets
 
   package:
     name: Arch package

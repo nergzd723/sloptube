@@ -4,9 +4,11 @@ A native YouTube Music client for Linux in Rust, GTK 4 and libadwaita. Goals,
 in order: low memory use, snappiness, and an interface that feels like the
 YouTube Music phone app on a phone and like music.youtube.com on a desktop.
 
-It reuses the parts of [SlopTube](https://github.com/nergzd723/sloptube) that already work (the tokio
-bridge, the resident yt-dlp helper, the image cache, MPRIS, the draggable
-sheet), but is a separate, audio-only app: no video pipeline, no WebKit.
+It started from copies of the parts of [SlopTube](../../README.md) that already
+worked (the tokio bridge, the resident yt-dlp helper, the image cache, MPRIS,
+the draggable sheet), and now runs inside SlopTube's process as the `music/`
+crate (`sloptube --music`), with its own audio-only pipeline, queue and
+account. Those copies haven't been merged with SlopTube's yet.
 
 ## Data
 
@@ -60,8 +62,9 @@ sheet), but is a separate, audio-only app: no video pipeline, no WebKit.
   bottom (transport, track info, like, volume, repeat, shuffle), and a Now
   playing page above the bar with the art on the left and Up next / Lyrics /
   Related on the right.
-- Dark by default, like YouTube Music; Now playing and album headers are
-  tinted with the artwork's dominant colour.
+- Near-black in the dark style, like YouTube Music (the style itself is
+  SlopTube's setting); Now playing and album headers are tinted with the
+  artwork's dominant colour.
 - Pages: Home (mood chips + shelves), Explore (new releases, charts, moods &
   genres), Search (suggestions, history, filter chips), Album/Playlist,
   Artist, generic browse pages, Library.
@@ -85,8 +88,8 @@ sheet), but is a separate, audio-only app: no video pipeline, no WebKit.
    player and desktop bar, MPRIS, preferences, local library (liked songs,
    saved albums/playlists/artists, history).
 2. **Done**: Google account. The session in the keyring, signed requests,
-   sign-in in a separate WebKit process (`sloptube-music-login`) so the player
-   never loads WebKit, Firefox and Chromium import; personalised Home, the
+   sign-in in a separate WebKit process (now `sloptube --music-login`),
+   Firefox and Chromium import; personalised Home, the
    YouTube Music library, likes/dislikes, saving and subscribing, Premium
    streams, plays added to history. Next: creating and editing playlists.
 3. Downloads for offline listening; time-synced lyrics; Song/Video toggle

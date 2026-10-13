@@ -5,6 +5,10 @@ libadwaita. The interface is modelled on the YouTube phone app and adapts from
 phone to desktop. Video is decoded on the GPU or VPU through GStreamer (VA-API
 or V4L2) and handed to the compositor without copies.
 
+It includes **SlopTube Music**, a YouTube Music client modelled on the YouTube
+Music app ([music/](music/README.md)). It runs in the same process: open it with
+`sloptube --music` or from the account menu, and keep both windows open at once.
+
 > [!WARNING]
 > SlopTube is vibecoded: it was written largely by an AI coding assistant and
 > has not been well tested. Expect bugs and rough edges, and see
@@ -80,6 +84,11 @@ SlopTube is young and has only run on one machine so far: a Dell XPS 13 9345
   background playback after closing the window, live streams, and the channel,
   playlist, comment and preferences screens beyond their parsers.
 
+SlopTube Music has been tried on its own (see [its status](music/README.md#status));
+running in SlopTube's process was tried under GTK's Broadway backend: opening
+either app from the other, links and `--music` handed to a running instance,
+each player pausing the other, the preferences of the active app, and quitting.
+
 If playback misbehaves, the output of `sloptube --diagnose` (see
 [Command line](#command-line)) is the most useful thing to include in a report.
 
@@ -143,10 +152,14 @@ install -Dm755 target/release/sloptube ~/.local/bin/sloptube
 install -Dm644 data/io.github.nergzd.SlopTube.desktop -t ~/.local/share/applications/
 install -Dm644 data/icons/scalable/apps/io.github.nergzd.SlopTube.svg -t ~/.local/share/icons/hicolor/scalable/apps/
 install -Dm644 data/icons/scalable/apps/io.github.nergzd.SlopTube-symbolic.svg -t ~/.local/share/icons/hicolor/symbolic/apps/
+install -Dm644 music/data/io.github.nergzd.SlopTubeMusic.desktop -t ~/.local/share/applications/
+install -Dm644 music/data/icons/scalable/apps/io.github.nergzd.SlopTubeMusic.svg -t ~/.local/share/icons/hicolor/scalable/apps/
+install -Dm644 music/data/icons/scalable/apps/io.github.nergzd.SlopTubeMusic-symbolic.svg -t ~/.local/share/icons/hicolor/symbolic/apps/
 ```
 
-Everything else (stylesheet, icons, the yt-dlp helper script) is compiled into
-the binary.
+The second desktop file starts SlopTube Music (`sloptube --music`). Everything
+else (stylesheets, icons, the yt-dlp helper scripts) is compiled into the
+binary.
 
 ## Using SlopTube
 
@@ -162,9 +175,28 @@ sloptube aqz-KE-bpKQ
 
 It understands `watch` links (including `t=` and `list=`), `youtu.be`, `/shorts/`
 and `/live/` (opened as normal videos), `/playlist?list=`, `/channel/…`,
-`/@handle` and `/results?search_query=`, on `www.`, `m.` and `music.youtube.com`.
+`/@handle` and `/results?search_query=`, on `www.` and `m.youtube.com`.
+`music.youtube.com` links open in [SlopTube Music](#sloptube-music).
 <kbd>Ctrl</kbd>+<kbd>L</kbd> opens a link box, filled in from the clipboard when it
 holds a YouTube link.
+
+### SlopTube Music
+
+`sloptube --music` (or `-m`) opens SlopTube Music, and so does **Open SlopTube
+Music** in the account menu; Music's own menu has **Open SlopTube**. Both run in
+one process, so a second launch opens a window in the running one, and both
+windows can be open at once.
+
+- `music.youtube.com` links open in Music; with `--music`, other YouTube links
+  and video IDs do too (`sloptube --music aqz-KE-bpKQ`).
+- When one app starts playing, the other pauses.
+- Preferences, Keyboard Shortcuts and About show those of the app whose window
+  is active. Closing a window closes only that app; <kbd>Ctrl</kbd>+<kbd>Q</kbd>
+  quits both.
+- Music keeps its own preferences, library, history and Google sign-in. The
+  light or dark style is SlopTube's setting and applies to both.
+
+[music/README.md](music/README.md) describes Music's features and shortcuts.
 
 ### Keyboard shortcuts
 
@@ -287,12 +319,14 @@ off.
 | Option | Effect |
 |---|---|
 | `URL` or `VIDEO_ID` … | Open these (see [Opening links](#opening-links)). |
+| `--music`, `-m` | Open SlopTube Music, and any links given in it (see [SlopTube Music](#sloptube-music)). |
 | `--diagnose[=VIDEO_ID]` | Start a separate, muted instance that plays a video (Big Buck Bunny by default), prints the decoder, DMABuf use, frame rate, dropped frames and memory once a second, seeks to 1:00 after 7 seconds, saves snapshots of a frame to `$XDG_RUNTIME_DIR/sloptube/diagnose-*.png`, and quits. Settings are not saved. |
-| `--selftest` | Without opening a window: list the decoders found, then check search, the watch page, comments, a channel, a playlist, Explore, suggestions and stream extraction against YouTube. |
+| `--selftest` | Without opening a window: list the decoders found, then check search, the watch page, comments, a channel, a playlist, Explore, suggestions and stream extraction against YouTube. With `--music`, run SlopTube Music's self-test instead. |
+| `--music-login` | SlopTube Music's Google sign-in window, which Music starts itself. |
 
 | Environment variable | Effect |
 |---|---|
-| `RUST_LOG` | Log filter, `sloptube=info` by default. `sloptube=debug` also logs every API request with its timing. |
+| `RUST_LOG` | Log filter, `sloptube=info,sloptube_music=info` by default. `sloptube=debug` also logs every API request with its timing. |
 | `GST_DEBUG` | GStreamer's own logging, e.g. `GST_DEBUG=2`. |
 | `SLOPTUBE_YTDLP` | Path of the `yt-dlp` to use instead of the one on `PATH`. |
 | `SLOPTUBE_YTDLP_PYTHON` | Python interpreter for the yt-dlp helper (normally taken from the `yt-dlp` script's shebang). |
@@ -313,6 +347,7 @@ off.
 | `~/.local/share/sloptube/session.json` | The session, only when no keyring is available. |
 | `~/Videos/SlopTube/` | Downloads (changeable in Preferences). |
 | `$XDG_RUNTIME_DIR/sloptube/` | The yt-dlp cookie file, generated DASH manifests and `--diagnose` snapshots. |
+| `~/.config/sloptube-music/`, `~/.local/share/sloptube-music/` | SlopTube Music's preferences, library and queue (see [its files](music/README.md#files)). |
 
 ## Troubleshooting
 
@@ -357,6 +392,10 @@ The parser tests run against real YouTube responses. They are skipped unless
 tools/fetch-fixtures.py target/fixtures
 SLOPTUBE_FIXTURES=target/fixtures cargo test
 ```
+
+SlopTube Music is the `music/` crate of the Cargo workspace, with its own
+fixtures (`music/tools/fetch-fixtures.py`, `SLOPTUBE_MUSIC_FIXTURES`).
+`cargo test --workspace` runs both crates' tests.
 
 Re-fetch the fixtures when YouTube changes its responses and a parser needs
 fixing.
