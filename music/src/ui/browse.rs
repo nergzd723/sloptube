@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::chips::ChipRow;
 use common::touch;
 use gtk::{gio, glib};
 
@@ -54,7 +55,7 @@ mod chips_imp {
 
     #[derive(Default)]
     pub struct ChipBar {
-        pub row: gtk::Box,
+        pub row: ChipRow,
         pub on_select: RefCell<Option<Rc<dyn Fn(Option<Chip>)>>>,
     }
 
@@ -86,16 +87,7 @@ impl Default for ChipBar {
 impl ChipBar {
     pub fn new() -> Self {
         let obj: Self = glib::Object::new();
-        let imp = obj.imp();
-        imp.row.set_spacing(8);
-        imp.row.add_css_class("chips");
-        let sw = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::External)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .child(&imp.row)
-            .build();
-        touch::track_scrolling(&sw);
-        obj.set_child(Some(&sw));
+        obj.set_child(Some(obj.imp().row.widget()));
         obj
     }
 
@@ -106,33 +98,19 @@ impl ChipBar {
     /// Show chips; `selected` names the chip to mark when the response doesn't say.
     pub fn set_chips(&self, chips: &[Chip], selected: Option<&str>) {
         let imp = self.imp();
-        super::clear(&imp.row);
+        imp.row.clear();
         let any_selected = chips.iter().any(|c| c.selected);
         for chip in chips {
-            let b = gtk::ToggleButton::with_label(&chip.title);
-            b.add_css_class("chip");
-            b.set_active(chip.selected || (!any_selected && selected == Some(chip.title.as_str())));
+            let on = chip.selected || (!any_selected && selected == Some(chip.title.as_str()));
             let chip = chip.clone();
-            b.connect_clicked(glib::clone!(
-                #[weak(rename_to = bar)]
-                self,
-                move |btn| {
-                    let active = btn.is_active();
-                    let mut c = bar.imp().row.first_child();
-                    while let Some(w) = c {
-                        if let Some(t) = w.downcast_ref::<gtk::ToggleButton>()
-                            && t != btn {
-                                t.set_active(false);
-                            }
-                        c = w.next_sibling();
-                    }
-                    let f = bar.imp().on_select.borrow().clone();
-                    if let Some(f) = f {
-                        f(active.then(|| chip.clone()));
-                    }
+            let bar = self.downgrade();
+            // Clicking the chosen chip again unchooses it.
+            imp.row.add(&chip.title.clone(), on, true, move |on| {
+                let f = bar.upgrade().and_then(|b| b.imp().on_select.borrow().clone());
+                if let Some(f) = f {
+                    f(on.then(|| chip.clone()));
                 }
-            ));
-            imp.row.append(&b);
+            });
         }
         self.set_visible(!chips.is_empty());
     }

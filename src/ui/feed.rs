@@ -6,6 +6,7 @@ use std::pin::Pin;
 use std::rc::Rc;
 
 use adw::prelude::*;
+use common::chips::ChipRow;
 use gtk::subclass::prelude::*;
 use gtk::{gio, glib};
 
@@ -28,7 +29,7 @@ mod imp {
         pub stack: gtk::Stack,
         pub status: adw::StatusPage,
         pub retry: gtk::Button,
-        pub chips_box: gtk::Box,
+        pub chips: ChipRow,
         pub chips_revealer: gtk::Revealer,
         pub more_spinner: gtk::Revealer,
         pub loader: RefCell<Option<Loader>>,
@@ -81,14 +82,7 @@ impl FeedView {
         imp.empty_icon.replace("view-grid-symbolic".into());
 
         // Chips
-        imp.chips_box.set_spacing(8);
-        imp.chips_box.add_css_class("chips");
-        let chips_scroll = gtk::ScrolledWindow::builder()
-            .hscrollbar_policy(gtk::PolicyType::External)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .child(&imp.chips_box)
-            .build();
-        imp.chips_revealer.set_child(Some(&chips_scroll));
+        imp.chips_revealer.set_child(Some(imp.chips.widget()));
         imp.chips_revealer.set_reveal_child(false);
         self.append(&imp.chips_revealer);
 
@@ -383,33 +377,18 @@ impl FeedView {
 
     fn set_chips(&self, chips: &[Chip]) {
         let imp = self.imp();
-        while let Some(c) = imp.chips_box.first_child() {
-            imp.chips_box.remove(&c);
-        }
+        imp.chips.clear();
         for chip in chips {
-            let b = gtk::ToggleButton::with_label(&chip.title);
-            b.add_css_class("chip");
-            b.set_active(chip.selected);
-            if let Some(token) = chip.token.clone() {
-                b.connect_clicked(glib::clone!(
-                    #[weak(rename_to = feed)]
-                    self,
-                    move |btn| {
-                        // Behave like radio buttons.
-                        let mut child = feed.imp().chips_box.first_child();
-                        while let Some(c) = child {
-                            if let Some(t) = c.downcast_ref::<gtk::ToggleButton>() {
-                                t.set_active(t == btn);
-                            }
-                            child = c.next_sibling();
-                        }
-                        feed.reload_with_token(token.clone());
-                    }
-                ));
-            } else {
+            let token = chip.token.clone();
+            let feed = self.downgrade();
+            let b = imp.chips.add(&chip.title, chip.selected, false, move |_| {
+                if let (Some(feed), Some(token)) = (feed.upgrade(), token.clone()) {
+                    feed.reload_with_token(token);
+                }
+            });
+            if chip.token.is_none() {
                 b.set_sensitive(chip.selected);
             }
-            imp.chips_box.append(&b);
         }
         imp.chips_revealer.set_reveal_child(!chips.is_empty());
     }

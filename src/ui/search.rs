@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 use std::rc::Rc;
 
 use adw::prelude::*;
+use common::chips::ChipRow;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
@@ -32,7 +33,6 @@ mod imp {
         pub feed: RefCell<Option<FeedView>>,
         pub query: RefCell<String>,
         pub filter: Cell<u8>,
-        pub filter_buttons: RefCell<Vec<gtk::ToggleButton>>,
         pub suggest_gen: Cell<u64>,
         pub suppress_suggest: Cell<bool>,
     }
@@ -134,39 +134,20 @@ impl SearchPage {
 
         // Results
         let results = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        let filters = gtk::Box::new(gtk::Orientation::Horizontal, 8);
-        filters.add_css_class("chips");
-        let mut first: Option<gtk::ToggleButton> = None;
+        let filters = ChipRow::new();
         for (i, (label, _)) in FILTERS.iter().enumerate() {
-            let b = gtk::ToggleButton::with_label(label);
-            b.add_css_class("chip");
-            if let Some(f) = &first {
-                b.set_group(Some(f));
-            } else {
-                first = Some(b.clone());
-                b.set_active(true);
-            }
-            b.connect_toggled(glib::clone!(
-                #[weak(rename_to = page)]
-                self,
-                move |b| {
-                    if b.is_active() && page.imp().filter.get() != i as u8 {
-                        page.imp().filter.set(i as u8);
-                        if let Some(f) = page.imp().feed.borrow().as_ref() {
-                            f.reload();
-                        }
+            let page = self.downgrade();
+            filters.add(label, i == 0, false, move |_| {
+                let Some(page) = page.upgrade() else { return };
+                if page.imp().filter.get() != i as u8 {
+                    page.imp().filter.set(i as u8);
+                    if let Some(f) = page.imp().feed.borrow().as_ref() {
+                        f.reload();
                     }
                 }
-            ));
-            filters.append(&b);
-            imp.filter_buttons.borrow_mut().push(b);
+            });
         }
-        let filter_scroll = gtk::ScrolledWindow::builder()
-            .child(&filters)
-            .hscrollbar_policy(gtk::PolicyType::External)
-            .vscrollbar_policy(gtk::PolicyType::Never)
-            .build();
-        results.append(&filter_scroll);
+        results.append(filters.widget());
 
         let feed = FeedView::new(CardStyle::GRID);
         feed.set_empty_state("system-search-symbolic", "No results");
