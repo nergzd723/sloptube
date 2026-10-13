@@ -15,7 +15,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::api::{self, Track, WatchTarget};
 use crate::config;
-use crate::extractor::extractor;
+use crate::extractor::{self, extractor};
 use crate::library::Library;
 use crate::player::{LoadRequest, NextStream, PlayState, Player};
 use crate::runtime;
@@ -854,16 +854,17 @@ impl Playback {
         }
         self.save_session();
         let id = track.video_id.clone();
+        let req = extractor::request();
         let pb = self.downgrade();
         glib::spawn_future_local(async move {
-            let res = runtime::run(async move { extractor().extract(&id).await }).await;
+            let res = runtime::run(async move { extractor().extract(&id, &req).await }).await;
             let Some(pb) = pb.upgrade() else { return };
             let imp = pb.imp();
             if imp.generation.get() != generation {
                 return;
             }
             let quality = settings::get().quality;
-            match res.as_ref().map(|info| info.select(quality)) {
+            match res.as_ref().map(|info| extractor::select(info, quality)) {
                 Ok(Some(f)) => {
                     log::info!("playing {} ({})", track.video_id, f.describe());
                     imp.player.load(LoadRequest {
@@ -940,11 +941,12 @@ impl Playback {
         let token = imp.token.get();
         let generation = imp.generation.get();
         let id = next.video_id.clone();
+        let req = extractor::request();
         let pb = self.downgrade();
         glib::spawn_future_local(async move {
             let res = runtime::run({
                 let id = id.clone();
-                async move { extractor().extract(&id).await }
+                async move { extractor().extract(&id, &req).await }
             })
             .await;
             let Some(pb) = pb.upgrade() else { return };
@@ -958,7 +960,7 @@ impl Playback {
             }
             let quality = settings::get().quality;
             if let Ok(info) = res
-                && let Some(f) = info.select(quality) {
+                && let Some(f) = extractor::select(&info, quality) {
                     log::debug!("prepared the next track {id} ({})", f.describe());
                     imp.player.set_next(Some(NextStream {
                         uri: f.url.clone(),
@@ -1043,7 +1045,7 @@ impl Playback {
             return;
         }
         let Some(url) = extractor()
-            .cached(video_id)
+            .cached(video_id, &extractor::request())
             .and_then(|i| i.tracking.clone())
             .and_then(|t| t.playback)
         else {

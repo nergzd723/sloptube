@@ -543,7 +543,8 @@ impl Playback {
         let this = self.downgrade();
         glib::spawn_future_local(async move {
             let id2 = id.clone();
-            let res = runtime::run(async move { extractor::extractor().extract(&id2, cookies).await }).await;
+            let req = extractor::Request::video(cookies);
+            let res = runtime::run(async move { extractor::extractor().extract(&id2, &req).await }).await;
             let Some(this) = this.upgrade() else { return };
             if this.imp().generation.get() != ticket {
                 return;

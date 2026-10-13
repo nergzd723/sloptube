@@ -4,7 +4,6 @@
 use common::auth;
 pub use common::account::Account;
 
-use crate::extractor::extractor;
 use crate::settings;
 
 /// Hand the account's cookies to yt-dlp (or stop doing so).
@@ -23,5 +22,5 @@ pub fn update_stream_cookies() {
             None
         }
     };
-    extractor().set_cookie_file(path);
+    crate::extractor::set_cookie_file(path);
 }

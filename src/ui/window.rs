@@ -716,6 +716,8 @@ impl Window {
     }
 
     pub fn navigate(&self, nav: Nav) {
+        // Someone browsing is about to watch something: start yt-dlp's worker.
+        crate::extractor::extractor().warm_up_soon();
         match nav {
             Nav::Video { item, playlist, start } => {
                 let same = self.playback().active() && self.playback().video_id() == item.id;

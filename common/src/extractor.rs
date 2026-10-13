@@ -1,7 +1,10 @@
-//! Stream URL extraction through yt-dlp.
+//! Stream URL extraction through yt-dlp, for both apps.
 //!
-//! A persistent Python worker (see `ytdlp_helper.py`) keeps yt-dlp imported;
-//! if it can't be started we fall back to running the `yt-dlp` CLI per video.
+//! A resident Python worker (see `ytdlp_helper.py`) keeps yt-dlp imported, so
+//! extractions after the first take about a second instead of three. One
+//! worker serves SlopTube and Music (each costs 55-80 MB), started on demand
+//! and stopped after a few idle minutes. If it can't be started we fall back
+//! to running the `yt-dlp` CLI per video.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -18,8 +21,51 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex as AsyncMutex, oneshot};
 
 const HELPER_SRC: &str = include_str!("ytdlp_helper.py");
+/// Stream URLs stay valid for about six hours; don't keep them that long.
 const CACHE_TTL: Duration = Duration::from_secs(2 * 3600);
+const CACHE_MAX: usize = 96;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// How long the worker may sit idle before it exits (`SLOPTUBE_HELPER_IDLE`
+/// seconds; 0 keeps it running).
+fn idle_timeout() -> Option<Duration> {
+    let secs = std::env::var("SLOPTUBE_HELPER_IDLE")
+        .ok()
+        .and_then(|s| s.parse::<u64>().ok())
+        .unwrap_or(300);
+    (secs > 0).then(|| Duration::from_secs(secs))
+}
+
+/// What to extract and how.
+#[derive(Debug, Clone)]
+pub struct Request {
+    /// Only audio formats, no captions or DASH ranges (Music).
+    pub audio_only: bool,
+    /// The site the watch URL is on (`www.youtube.com`, `music.youtube.com`).
+    pub host: &'static str,
+    /// Netscape cookie file of the signed-in account, if yt-dlp should use it.
+    pub cookies: Option<PathBuf>,
+}
+
+impl Request {
+    pub fn video(cookies: Option<PathBuf>) -> Self {
+        Self { audio_only: false, host: "www.youtube.com", cookies }
+    }
+
+    pub fn music(cookies: Option<PathBuf>) -> Self {
+        Self { audio_only: true, host: "music.youtube.com", cookies }
+    }
+
+    /// Results depend on the kind of request and on who asked: a stream
+    /// extracted signed out isn't reused once signed in, or for someone else.
+    fn cache_key(&self, id: &str) -> String {
+        format!(
+            "{id}|{}|{}",
+            if self.audio_only { "audio" } else { "all" },
+            self.cookies.as_ref().map_or(0, |_| crate::session::generation() + 1)
+        )
+    }
+}
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Format {
@@ -88,6 +134,31 @@ impl Format {
     pub fn size(&self) -> Option<u64> {
         self.filesize.or(self.filesize_approx)
     }
+
+    pub fn is_opus(&self) -> bool {
+        self.acodec.as_deref().is_some_and(|c| c.starts_with("opus"))
+    }
+
+    /// Only the headers a media server cares about.
+    pub fn headers(&self) -> Vec<(String, String)> {
+        self.http_headers
+            .iter()
+            .filter(|(k, _)| {
+                let k = k.to_ascii_lowercase();
+                k == "user-agent" || k == "accept-language" || k == "referer" || k == "origin"
+            })
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect()
+    }
+
+    pub fn describe(&self) -> String {
+        format!(
+            "{} {} {:.0} kbps",
+            self.format_id,
+            self.acodec.as_deref().unwrap_or("?"),
+            self.abr.unwrap_or(0.0)
+        )
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -107,9 +178,12 @@ pub struct Caption {
     pub url: String,
 }
 
+/// Playback-tracking URLs of the player response, for watch history.
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct Tracking {
+    #[serde(default)]
     pub playback: Option<String>,
+    #[serde(default)]
     pub watchtime: Option<String>,
 }
 
@@ -149,6 +223,31 @@ pub struct StreamInfo {
 }
 
 type Pending = Arc<Mutex<HashMap<u64, oneshot::Sender<std::result::Result<Value, HelperFailure>>>>>;
+type Waiters = Vec<oneshot::Sender<std::result::Result<Arc<StreamInfo>, Shared>>>;
+
+/// An extraction's error, handed to the requests that shared it.
+#[derive(Clone)]
+struct Shared {
+    message: String,
+    network: bool,
+}
+
+impl Shared {
+    fn of(e: &anyhow::Error) -> Self {
+        Self {
+            message: format!("{e:#}"),
+            network: e.downcast_ref::<NetworkError>().is_some(),
+        }
+    }
+
+    fn into_error(self) -> anyhow::Error {
+        if self.network {
+            NetworkError(self.message).into()
+        } else {
+            anyhow!(self.message)
+        }
+    }
+}
 
 /// Extraction failed because YouTube couldn't be reached at all.
 #[derive(Debug)]
@@ -171,7 +270,11 @@ pub struct Extractor {
     pending: Pending,
     next_id: AtomicU64,
     helper_broken: Mutex<bool>,
+    last_use: Mutex<Instant>,
+    /// By `Request::cache_key`.
     cache: Mutex<HashMap<String, (Instant, Arc<StreamInfo>)>>,
+    /// Extractions in flight, so a prefetch and a play share one request.
+    inflight: Mutex<HashMap<String, Waiters>>,
 }
 
 static EXTRACTOR: OnceLock<Extractor> = OnceLock::new();
@@ -182,7 +285,9 @@ pub fn extractor() -> &'static Extractor {
         pending: Arc::new(Mutex::new(HashMap::new())),
         next_id: AtomicU64::new(1),
         helper_broken: Mutex::new(false),
+        last_use: Mutex::new(Instant::now()),
         cache: Mutex::new(HashMap::new()),
+        inflight: Mutex::new(HashMap::new()),
     })
 }
 
@@ -218,35 +323,106 @@ fn python_for(ytdlp: &Path) -> (PathBuf, Option<PathBuf>) {
 }
 
 impl Extractor {
-    pub fn cached(&self, id: &str) -> Option<Arc<StreamInfo>> {
+    pub fn cached(&self, id: &str, req: &Request) -> Option<Arc<StreamInfo>> {
         let cache = self.cache.lock().unwrap();
         cache
-            .get(id)
+            .get(&req.cache_key(id))
             .filter(|(t, _)| t.elapsed() < CACHE_TTL)
             .map(|(_, i)| i.clone())
     }
 
+    /// Forget what was extracted for `id` (e.g. after its URLs stopped working).
     pub fn invalidate(&self, id: &str) {
-        self.cache.lock().unwrap().remove(id);
+        let prefix = format!("{id}|");
+        self.cache.lock().unwrap().retain(|k, _| !k.starts_with(&prefix));
     }
 
-    /// Extract stream information for a video (must run on the tokio runtime).
-    pub async fn extract(&self, id: &str, cookiefile: Option<PathBuf>) -> Result<Arc<StreamInfo>> {
-        if let Some(info) = self.cached(id) {
+    /// Start the worker in the background when playing looks likely soon.
+    pub fn warm_up_soon(&'static self) {
+        static ASKED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if self.helper.try_lock().is_ok_and(|g| g.is_some()) {
+            return;
+        }
+        if ASKED.swap(true, Ordering::AcqRel) {
+            return;
+        }
+        crate::runtime::spawn(async move {
+            self.warm_up().await;
+            ASKED.store(false, Ordering::Release);
+        });
+    }
+
+    /// Start the worker ahead of the first extraction (tokio runtime).
+    pub async fn warm_up(&self) {
+        if *self.helper_broken.lock().unwrap() {
+            return;
+        }
+        let mut guard = self.helper.lock().await;
+        if guard.is_none() {
+            match self.start_helper().await {
+                Ok(h) => {
+                    *guard = Some(h);
+                    *self.last_use.lock().unwrap() = Instant::now();
+                }
+                Err(e) => {
+                    log::warn!("yt-dlp helper unavailable ({e:#}); using the CLI");
+                    *self.helper_broken.lock().unwrap() = true;
+                }
+            }
+        }
+    }
+
+    /// Stream information for a video or song (must run on the tokio runtime).
+    /// Concurrent requests for the same thing share one extraction. A failure
+    /// to reach YouTube at all comes back as a [`NetworkError`].
+    pub async fn extract(&self, id: &str, req: &Request) -> Result<Arc<StreamInfo>> {
+        if let Some(info) = self.cached(id, req) {
             return Ok(info);
         }
-        let url = format!("https://www.youtube.com/watch?v={id}");
+        let key = req.cache_key(id);
+        let waiter = {
+            let mut inflight = self.inflight.lock().unwrap();
+            match inflight.get_mut(&key) {
+                Some(waiters) => {
+                    let (tx, rx) = oneshot::channel();
+                    waiters.push(tx);
+                    Some(rx)
+                }
+                None => {
+                    inflight.insert(key.clone(), Vec::new());
+                    None
+                }
+            }
+        };
+        if let Some(rx) = waiter {
+            return match rx.await {
+                Ok(Ok(info)) => Ok(info),
+                Ok(Err(e)) => Err(e.into_error()),
+                Err(_) => Err(anyhow!("extraction was abandoned")),
+            };
+        }
+        let res = self.extract_uncached(id, req, &key).await;
+        let waiters = self.inflight.lock().unwrap().remove(&key).unwrap_or_default();
+        for w in waiters {
+            let _ = w.send(res.as_ref().map(Arc::clone).map_err(Shared::of));
+        }
+        res
+    }
+
+    async fn extract_uncached(&self, id: &str, req: &Request, key: &str) -> Result<Arc<StreamInfo>> {
+        let url = format!("https://{}/watch?v={id}", req.host);
+        let cookies = req.cookies.as_deref();
         let started = Instant::now();
         let broken = *self.helper_broken.lock().unwrap();
         let value = if broken {
-            self.cli_extract(&url, cookiefile.as_deref()).await?
+            self.cli_extract(&url, req).await?
         } else {
-            match self.helper_request(&url, cookiefile.as_deref()).await {
+            match self.helper_request(&url, req).await {
                 Ok(v) => v,
                 Err(HelperError::Unavailable(e)) => {
                     log::warn!("yt-dlp helper unavailable ({e:#}); falling back to the CLI");
                     *self.helper_broken.lock().unwrap() = true;
-                    self.cli_extract(&url, cookiefile.as_deref()).await?
+                    self.cli_extract(&url, req).await?
                 }
                 Err(HelperError::Failed(f)) if f.network => return Err(NetworkError(f.message).into()),
                 Err(HelperError::Failed(f)) => bail!(f.message),
@@ -254,15 +430,21 @@ impl Extractor {
         };
         let info: StreamInfo = serde_json::from_value(value).context("unexpected yt-dlp output")?;
         log::info!(
-            "extracted {} in {:.2}s ({} formats)",
-            id,
+            "extracted {id} in {:.2}s ({} {}formats{})",
             started.elapsed().as_secs_f64(),
-            info.formats.len()
+            info.formats.len(),
+            if req.audio_only { "audio " } else { "" },
+            if cookies.is_some() { ", signed in" } else { "" },
         );
         let info = Arc::new(info);
         let mut cache = self.cache.lock().unwrap();
         cache.retain(|_, (t, _)| t.elapsed() < CACHE_TTL);
-        cache.insert(id.to_owned(), (Instant::now(), info.clone()));
+        if cache.len() >= CACHE_MAX
+            && let Some(oldest) = cache.iter().min_by_key(|(_, (t, _))| *t).map(|(k, _)| k.clone())
+        {
+            cache.remove(&oldest);
+        }
+        cache.insert(key.to_owned(), (Instant::now(), info.clone()));
         Ok(info)
     }
 
@@ -339,17 +521,39 @@ impl Extractor {
                 log::debug!("yt-dlp: {line}");
             }
         });
+        if let Some(idle) = idle_timeout() {
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(Duration::from_secs(30)).await;
+                    let ex = extractor();
+                    let mut guard = ex.helper.lock().await;
+                    if guard.is_none() {
+                        return;
+                    }
+                    let idle_for = ex.last_use.lock().unwrap().elapsed();
+                    if idle_for >= idle && ex.pending.lock().unwrap().is_empty() {
+                        log::info!("stopping the idle yt-dlp helper");
+                        // Closing its stdin ends the worker's read loop.
+                        *guard = None;
+                        drop(guard);
+                        crate::memory::trim_soon();
+                        return;
+                    }
+                }
+            });
+        }
         Ok(Helper { stdin })
     }
 
-    async fn helper_request(&self, url: &str, cookiefile: Option<&Path>) -> std::result::Result<Value, HelperError> {
+    async fn helper_request(&self, url: &str, request: &Request) -> std::result::Result<Value, HelperError> {
         let id = self.next_id.fetch_add(1, Ordering::Relaxed);
-        let mut req = json!({ "id": id, "op": "extract", "url": url });
-        if let Some(c) = cookiefile {
+        let mut req = json!({ "id": id, "op": "extract", "url": url, "audio_only": request.audio_only });
+        if let Some(c) = &request.cookies {
             req["cookiefile"] = json!(c);
         }
         let (tx, rx) = oneshot::channel();
         self.pending.lock().unwrap().insert(id, tx);
+        *self.last_use.lock().unwrap() = Instant::now();
 
         {
             let mut guard = self.helper.lock().await;
@@ -379,7 +583,7 @@ impl Extractor {
             }
         }
 
-        match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
+        let res = match tokio::time::timeout(REQUEST_TIMEOUT, rx).await {
             Ok(Ok(Ok(v))) => Ok(v),
             Ok(Ok(Err(f))) => {
                 if f.message == "yt-dlp helper exited" {
@@ -392,10 +596,13 @@ impl Extractor {
                 self.pending.lock().unwrap().remove(&id);
                 Err(HelperError::Failed(HelperFailure::other("yt-dlp took too long to respond")))
             }
-        }
+        };
+        *self.last_use.lock().unwrap() = Instant::now();
+        res
     }
 
-    async fn cli_extract(&self, url: &str, cookiefile: Option<&Path>) -> Result<Value> {
+    async fn cli_extract(&self, url: &str, req: &Request) -> Result<Value> {
+        let cookiefile = req.cookies.as_deref();
         let ytdlp = ytdlp_path().ok_or_else(|| anyhow!("yt-dlp is not installed"))?;
         let mut cmd = Command::new(ytdlp);
         cmd.args(["-J", "--no-warnings", "--no-playlist", url])
@@ -433,7 +640,11 @@ impl Extractor {
         v["captions"] = json!([]);
         v["is_live"] = json!(v["is_live"].as_bool().unwrap_or(false));
         if let Some(formats) = v.get_mut("formats").and_then(Value::as_array_mut) {
-            formats.retain(|f| f.get("url").and_then(Value::as_str).is_some());
+            let audio = |f: &Value| {
+                f.get("acodec").and_then(Value::as_str).is_some_and(|c| c != "none")
+                    && f.get("vcodec").and_then(Value::as_str).is_none_or(|c| c == "none")
+            };
+            formats.retain(|f| f.get("url").and_then(Value::as_str).is_some() && (!req.audio_only || audio(f)));
         }
         Ok(v)
     }

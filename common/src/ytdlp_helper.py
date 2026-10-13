@@ -1,8 +1,10 @@
-"""SlopTube's long-running yt-dlp worker.
+"""The long-running yt-dlp worker SlopTube and SlopTube Music share.
 
 Reads one JSON request per line on stdin and answers with one JSON line on
 stdout. Keeping yt-dlp imported (and its caches warm) makes every extraction
-after the first noticeably faster than spawning the CLI.
+after the first noticeably faster than spawning the CLI. Requests with
+"audio_only" (Music's) get only the audio formats back, without captions or
+DASH ranges.
 """
 import json
 import sys
@@ -105,6 +107,10 @@ FORMAT_KEYS = (
 )
 
 
+def _is_audio(f):
+    return f.get("acodec") not in (None, "none") and f.get("vcodec") in (None, "none")
+
+
 def _captions(tracks, keep=None):
     out = []
     for lang, entries in (tracks or {}).items():
@@ -132,14 +138,15 @@ def extract(req):
     _capture.tracking = None
     with yt_dlp.YoutubeDL(opts) as ydl:
         info = ydl.extract_info(req["url"], download=False)
-    raw_ranges = getattr(_capture, "ranges", None) or {}
+    audio_only = bool(req.get("audio_only"))
+    raw_ranges = {} if audio_only else getattr(_capture, "ranges", None) or {}
     ranges = {}
     formats = []
     for f in info.get("formats") or []:
         r = _ranges_for(raw_ranges, f)
         if r is not None and f.get("format_id"):
             ranges[f["format_id"]] = r
-        if not f.get("url"):
+        if not f.get("url") or (audio_only and not _is_audio(f)):
             continue
         formats.append({k: f[k] for k in FORMAT_KEYS if f.get(k) is not None})
     return {
@@ -153,7 +160,7 @@ def extract(req):
             {"start": c.get("start_time"), "end": c.get("end_time"), "title": c.get("title")}
             for c in info.get("chapters") or []
         ],
-        "captions": _captions(info.get("subtitles"))
+        "captions": [] if audio_only else _captions(info.get("subtitles"))
         + _captions(info.get("automatic_captions"), lambda l: l.endswith("-orig")),
         "tracking": getattr(_capture, "tracking", None),
         "ranges": ranges,

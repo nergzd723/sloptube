@@ -6,6 +6,7 @@
 
 pub mod account;
 pub mod auth;
+pub mod extractor;
 pub mod image;
 pub mod innertube;
 pub mod links;

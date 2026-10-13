@@ -104,8 +104,8 @@ pub async fn run() -> Result<()> {
     for label in ["cold", "warm"] {
         let started = std::time::Instant::now();
         extractor().invalidate(&first_song.video_id);
-        let info = extractor().extract(&first_song.video_id).await.context("extraction")?;
-        let f = info.select(AudioQuality::High).context("no audio stream")?;
+        let info = extractor().extract(&first_song.video_id, &crate::extractor::request()).await.context("extraction")?;
+        let f = crate::extractor::select(&info, AudioQuality::High).context("no audio stream")?;
         println!(
             "extraction ({label}): {:.2}s, {} formats, picked {}",
             started.elapsed().as_secs_f64(),

@@ -71,10 +71,10 @@ pub async fn run() -> anyhow::Result<()> {
     println!("suggestions: {:?}", &sugg[..sugg.len().min(4)]);
 
     let t = std::time::Instant::now();
-    let info = extractor::extractor().extract("aqz-KE-bpKQ", None).await?;
+    let info = extractor::extractor().extract("aqz-KE-bpKQ", &extractor::Request::video(None)).await?;
     println!("extract #1: {} formats ({:?})", info.formats.len(), t.elapsed());
     let t = std::time::Instant::now();
-    let info2 = extractor::extractor().extract("jNQXAC9IVRw", None).await?;
+    let info2 = extractor::extractor().extract("jNQXAC9IVRw", &extractor::Request::video(None)).await?;
     println!("extract #2 (warm): {} formats, {} chapters, {} captions ({:?})", info2.formats.len(), info2.chapters.len(), info2.captions.len(), t.elapsed());
     Ok(info).map(|info| {
         let support = decoders::probe();
