@@ -33,15 +33,7 @@ pub fn browse_loader(browse_id: &'static str) -> Loader {
 }
 
 fn logo() -> gtk::Widget {
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    b.add_css_class("app-logo");
-    let icon = gtk::Image::from_icon_name(config::APP_ID);
-    icon.set_pixel_size(24);
-    let label = gtk::Label::new(Some(config::APP_NAME));
-    label.add_css_class("logo-text");
-    b.append(&icon);
-    b.append(&label);
-    b.upcast()
+    common::shell::logo(config::APP_ID, config::APP_NAME, 24).upcast()
 }
 
 fn account_header(account: &Account) -> gtk::Box {
@@ -137,7 +129,7 @@ pub fn account_button() -> gtk::MenuButton {
 
 /// Header bar used on the root page of every tab.
 pub fn tab_header(win: &super::window::Window) -> adw::HeaderBar {
-    let header = adw::HeaderBar::new();
+    let header = common::shell::header_bar();
     header.add_css_class("tab-header");
     let logo = logo();
     header.pack_start(&logo);
@@ -182,7 +174,7 @@ fn toolbar_page(title: &str, tag: &str, header: &adw::HeaderBar, content: &impl 
 pub fn feed_page(title: &str, loader: Loader, style: CardStyle) -> (adw::NavigationPage, FeedView) {
     let feed = FeedView::new(style);
     feed.set_loader(loader);
-    let header = adw::HeaderBar::new();
+    let header = common::shell::header_bar();
     let page = toolbar_page(title, "", &header, &feed);
     let f = feed.clone();
     page.connect_showing(move |_| f.ensure_loaded());
@@ -446,6 +438,6 @@ fn open_library_entry(widget: &impl IsA<gtk::Widget>, key: &str) {
 pub fn static_page(title: &str, page_data: FeedPage) -> adw::NavigationPage {
     let feed = FeedView::new(CardStyle::GRID);
     feed.set_items(page_data.items);
-    let header = adw::HeaderBar::new();
+    let header = common::shell::header_bar();
     toolbar_page(title, "", &header, &feed)
 }

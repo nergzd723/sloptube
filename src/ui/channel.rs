@@ -67,7 +67,7 @@ impl ChannelPage {
 
     fn build(&self) {
         let imp = self.imp();
-        let header = adw::HeaderBar::new();
+        let header = common::shell::header_bar();
         let tv = adw::ToolbarView::new();
         tv.add_top_bar(&header);
 

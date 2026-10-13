@@ -1,12 +1,13 @@
 //! Main window: adaptive navigation (sidebar ↔ bottom tabs), the player bar
 //! and the Now playing sheet.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use common::sheet::{self, Hero, PlayerSheet};
-use gtk::{gdk, gio, glib};
+use common::shell::{self, Shell};
+use gtk::{gio, glib};
 
 use super::art::ArtView;
 use super::artist::artist_page;
@@ -38,27 +39,20 @@ mod imp {
     #[derive(Default, glib::Properties)]
     #[properties(wrapper_type = super::Window)]
     pub struct Window {
-        pub toast_overlay: adw::ToastOverlay,
+        pub shell: OnceCell<Shell>,
         pub root_overlay: gtk::Overlay,
         pub content_overlay: gtk::Overlay,
-        pub split: adw::OverlaySplitView,
-        pub stack: adw::ViewStack,
-        pub switcher_bar: adw::ViewSwitcherBar,
-        pub sidebar_nav: gtk::ListBox,
         pub sidebar_saved: gtk::ListBox,
-        pub navs: RefCell<Vec<(String, adw::NavigationView)>>,
         pub bar_revealer: gtk::Revealer,
         pub bar: RefCell<Option<PlayerBar>>,
         pub sheet: RefCell<Option<PlayerSheet>>,
         pub now_playing: RefCell<Option<NowPlayingView>>,
-        pub narrow_only: RefCell<Vec<glib::WeakRef<gtk::Widget>>>,
         /// Phone layout: bottom tabs, mini player.
         #[property(get)]
         pub narrow: Cell<bool>,
         pub expanded: Cell<bool>,
         pub home: RefCell<Option<BrowseView>>,
         pub explore: RefCell<Option<BrowseView>>,
-        pub syncing: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -76,7 +70,6 @@ mod imp {
             obj.build();
             obj.setup_actions();
             obj.setup_shortcuts();
-            obj.setup_breakpoints();
             obj.bind_playback();
         }
     }
@@ -117,13 +110,7 @@ glib::wrapper! {
 impl Window {
     pub fn new(app: &adw::Application) -> Self {
         // SLOPTUBE_MUSIC_WINDOW_SIZE=390x844 tries the phone layout.
-        let (w, h) = std::env::var("SLOPTUBE_MUSIC_WINDOW_SIZE")
-            .ok()
-            .and_then(|s| {
-                let (w, h) = s.split_once('x')?;
-                Some((w.parse().ok()?, h.parse().ok()?))
-            })
-            .unwrap_or((1180, 780));
+        let (w, h) = shell::window_size("SLOPTUBE_MUSIC_WINDOW_SIZE", (1180, 780));
         let win: Self = glib::Object::builder()
             .property("application", app)
             .property("title", config::APP_NAME)
@@ -145,18 +132,16 @@ impl Window {
         win
     }
 
+    fn shell(&self) -> &Shell {
+        self.imp().shell.get().expect("window built")
+    }
+
     pub fn toast(&self, message: &str) {
-        let t = adw::Toast::new(message);
-        t.set_timeout(3);
-        self.imp().toast_overlay.add_toast(t);
+        self.shell().toast(message);
     }
 
     fn register_narrow_only(&self, w: &impl IsA<gtk::Widget>) {
-        w.set_visible(self.imp().narrow.get());
-        self.imp()
-            .narrow_only
-            .borrow_mut()
-            .push(w.upcast_ref::<gtk::Widget>().downgrade());
+        self.shell().register_narrow_only(w);
     }
 
     fn root_page(&self, name: &str, title: &str, content: &impl IsA<gtk::Widget>) -> adw::NavigationPage {
@@ -170,10 +155,11 @@ impl Window {
     fn build(&self) {
         let imp = self.imp();
         self.add_css_class(WINDOW_CLASS);
+        let shell = Shell::new(self.upcast_ref(), &page::logo(), (220.0, 260.0), 760);
+        imp.shell.set(shell.clone()).ok();
 
         // Tabs, each with its own navigation stack.
         for (name, title, icon) in TABS {
-            let nav = adw::NavigationView::new();
             let root = match name {
                 "home" => {
                     let view = BrowseView::new(BrowseTarget::new("FEmusic_home"), true);
@@ -192,43 +178,20 @@ impl Window {
                 }
                 _ => self.root_page(name, title, &super::library::library_view()),
             };
-            nav.add(&root);
-            let p = imp.stack.add_titled_with_icon(&nav, Some(name), title, icon);
-            p.set_use_underline(false);
-            imp.navs.borrow_mut().push((name.into(), nav));
+            shell.add_tab(name, title, icon, &root);
         }
-        imp.stack.set_vexpand(true);
-        imp.stack.connect_visible_child_name_notify(glib::clone!(
+        shell.stack().connect_visible_child_name_notify(glib::clone!(
             #[weak(rename_to = win)]
             self,
             move |_| win.on_tab_changed()
         ));
-        imp.switcher_bar.set_stack(Some(&imp.stack));
-
-        // Sidebar.
-        imp.sidebar_nav.add_css_class("navigation-sidebar");
-        for (name, title, icon) in TABS {
-            let row = gtk::ListBoxRow::new();
-            row.set_widget_name(name);
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 14);
-            b.append(&gtk::Image::from_icon_name(icon));
-            b.append(&gtk::Label::new(Some(title)));
-            row.set_child(Some(&b));
-            imp.sidebar_nav.append(&row);
-        }
-        imp.sidebar_nav.connect_row_activated(glib::clone!(
+        shell.connect_tab_activated(glib::clone!(
             #[weak(rename_to = win)]
             self,
-            move |_, row| {
-                let name = row.widget_name();
-                let imp = win.imp();
-                if imp.stack.visible_child_name().as_deref() == Some(name.as_str()) {
-                    win.current_nav().pop_to_tag(&name);
-                }
-                imp.stack.set_visible_child_name(&name);
-                win.collapse_player();
-            }
+            move || win.collapse_player()
         ));
+
+        // Sidebar: the library below the tabs.
         imp.sidebar_saved.add_css_class("navigation-sidebar");
         imp.sidebar_saved.set_selection_mode(gtk::SelectionMode::None);
         imp.sidebar_saved.connect_row_activated(glib::clone!(
@@ -240,28 +203,10 @@ impl Window {
         saved_title.set_xalign(0.0);
         saved_title.add_css_class("heading");
         saved_title.add_css_class("sidebar-section");
-        let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        sidebar_box.append(&imp.sidebar_nav);
-        sidebar_box.append(&gtk::Separator::new(gtk::Orientation::Horizontal));
-        sidebar_box.append(&saved_title);
-        sidebar_box.append(&imp.sidebar_saved);
-        let sidebar_scroll = gtk::ScrolledWindow::builder()
-            .child(&sidebar_box)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .build();
-        let sidebar_header = page::header_bar();
-        sidebar_header.set_show_title(false);
-        sidebar_header.set_show_end_title_buttons(false);
-        sidebar_header.pack_start(&page::logo());
-        let sidebar_tv = adw::ToolbarView::new();
-        sidebar_tv.add_top_bar(&sidebar_header);
-        sidebar_tv.set_content(Some(&sidebar_scroll));
-        sidebar_tv.add_css_class("sidebar");
-        imp.split.set_sidebar(Some(&sidebar_tv));
-        imp.split.set_content(Some(&imp.stack));
-        imp.split.set_min_sidebar_width(220.0);
-        imp.split.set_max_sidebar_width(260.0);
+        shell.sidebar().append(&gtk::Separator::new(gtk::Orientation::Horizontal));
+        shell.sidebar().append(&saved_title);
+        shell.sidebar().append(&imp.sidebar_saved);
+        shell.split().set_content(Some(shell.stack()));
         Library::get().connect_changed(glib::clone!(
             #[weak(rename_to = win)]
             self,
@@ -342,15 +287,36 @@ impl Window {
         imp.now_playing.replace(Some(now_playing));
         imp.sheet.replace(Some(sheet));
 
-        imp.content_overlay.set_child(Some(&imp.split));
+        imp.content_overlay.set_child(Some(shell.split()));
         imp.content_overlay.set_vexpand(true);
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
         main_box.append(&imp.content_overlay);
         main_box.append(&imp.bar_revealer);
-        main_box.append(&imp.switcher_bar);
+        main_box.append(shell.switcher_bar());
         imp.root_overlay.set_child(Some(&main_box));
-        imp.toast_overlay.set_child(Some(&imp.root_overlay));
-        self.set_content(Some(&imp.toast_overlay));
+        shell.toast_overlay().set_child(Some(&imp.root_overlay));
+        self.set_content(Some(shell.toast_overlay()));
+
+        shell.connect_layout(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move |narrow| win.apply_layout(narrow)
+        ));
+        self.apply_layout(shell.narrow());
+        // Keep keyboard focus in Now playing while it covers the window.
+        if let (Some(sheet), Some(np)) = (imp.sheet.borrow().clone(), imp.now_playing.borrow().clone()) {
+            shell.keep_focus_in(
+                &sheet,
+                glib::clone!(
+                    #[weak(rename_to = win)]
+                    self,
+                    #[upgrade_or]
+                    false,
+                    move || win.imp().expanded.get()
+                ),
+                move || np.grab_play_focus(),
+            );
+        }
 
         if let Some(home) = imp.home.borrow().as_ref() {
             home.ensure_loaded();
@@ -438,87 +404,17 @@ impl Window {
 
     fn on_tab_changed(&self) {
         let imp = self.imp();
-        let name = imp.stack.visible_child_name().unwrap_or_default();
+        let name = self.shell().visible_tab();
         if name == "explore"
             && let Some(e) = imp.explore.borrow().as_ref() {
                 e.ensure_loaded();
             }
-        imp.syncing.set(true);
-        let mut child = imp.sidebar_nav.first_child();
-        while let Some(c) = child {
-            if let Some(row) = c.downcast_ref::<gtk::ListBoxRow>()
-                && row.widget_name() == name {
-                    imp.sidebar_nav.select_row(Some(row));
-                }
-            child = c.next_sibling();
-        }
-        imp.syncing.set(false);
     }
 
-    fn setup_breakpoints(&self) {
-        // Only one breakpoint applies at a time (the last matching one), so both
-        // switch to the narrow layout; the phone one also tightens the styling.
-        for (condition, phone) in [("max-width: 760sp", false), ("max-width: 520sp", true)] {
-            let bp = adw::Breakpoint::new(adw::BreakpointCondition::parse(condition).unwrap());
-            bp.connect_apply(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                move |_| {
-                    if phone {
-                        win.add_css_class("phone");
-                    } else {
-                        win.remove_css_class("phone");
-                    }
-                    win.set_narrow(true);
-                }
-            ));
-            bp.connect_unapply(glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                move |_| {
-                    if phone {
-                        win.remove_css_class("phone");
-                    }
-                    // Switching between the two breakpoints unapplies one before
-                    // applying the other: only go wide if none applies after all.
-                    glib::idle_add_local_once(glib::clone!(
-                        #[weak]
-                        win,
-                        move || {
-                            if win.current_breakpoint().is_none() {
-                                win.set_narrow(false);
-                            }
-                        }
-                    ));
-                }
-            ));
-            self.add_breakpoint(bp);
-        }
-        self.apply_layout(false);
-    }
-
-    fn set_narrow(&self, narrow: bool) {
-        if self.imp().narrow.get() != narrow {
-            self.apply_layout(narrow);
-        }
-    }
-
+    /// The shell switched layouts: adapt the player bar, Now playing and where the sheet goes.
     fn apply_layout(&self, narrow: bool) {
-        log::debug!("layout: narrow={narrow} (window {}x{})", self.width(), self.height());
         let imp = self.imp();
         let changed = imp.narrow.replace(narrow) != narrow;
-        imp.split.set_collapsed(narrow);
-        imp.split.set_show_sidebar(!narrow);
-        imp.switcher_bar.set_reveal(narrow);
-        if narrow {
-            self.add_css_class("narrow");
-        } else {
-            self.remove_css_class("narrow");
-        }
-        imp.narrow_only.borrow_mut().retain(|w| w.upgrade().is_some());
-        for w in imp.narrow_only.borrow().iter().filter_map(|w| w.upgrade()) {
-            w.set_visible(narrow);
-        }
         if let Some(bar) = imp.bar.borrow().as_ref() {
             bar.set_narrow(narrow);
             bar.set_opacity(1.0);
@@ -624,7 +520,7 @@ impl Window {
         action("sign-out", super::login::confirm_sign_out);
         action("show-account", |w| {
             w.collapse_player();
-            w.imp().stack.set_visible_child_name("library");
+            w.shell().stack().set_visible_child_name("library");
         });
     }
 
@@ -678,14 +574,7 @@ impl Window {
     }
 
     fn current_nav(&self) -> adw::NavigationView {
-        let imp = self.imp();
-        let name = imp.stack.visible_child_name().unwrap_or_default();
-        imp.navs
-            .borrow()
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, v)| v.clone())
-            .unwrap_or_else(|| imp.navs.borrow()[0].1.clone())
+        self.shell().current_nav()
     }
 
     fn push_page(&self, page: &impl IsA<adw::NavigationPage>) {
@@ -798,55 +687,29 @@ impl Window {
         if self.current_nav().navigation_stack().n_items() > 1 {
             return;
         }
-        match imp.stack.visible_child_name().as_deref() {
-            Some("home") => imp.home.borrow().as_ref().map(BrowseView::reload),
-            Some("explore") => imp.explore.borrow().as_ref().map(BrowseView::reload),
+        match self.shell().visible_tab().as_str() {
+            "home" => imp.home.borrow().as_ref().map(BrowseView::reload),
+            "explore" => imp.explore.borrow().as_ref().map(BrowseView::reload),
             _ => None,
         };
     }
 
     fn open_link_dialog(&self) {
-        let dialog = adw::AlertDialog::new(Some("Open Link"), Some("A YouTube Music or YouTube link"));
-        let entry = gtk::Entry::builder()
-            .placeholder_text("https://music.youtube.com/…")
-            .activates_default(true)
-            .build();
-        if let Some(display) = gdk::Display::default() {
-            let entry = entry.downgrade();
-            display.clipboard().read_text_async(gio::Cancellable::NONE, move |res| {
-                if let (Ok(Some(text)), Some(entry)) = (res, entry.upgrade())
-                    && super::nav_for_url(&text).is_some() && entry.text().is_empty() {
-                        entry.set_text(text.trim());
-                        entry.select_region(0, -1);
-                    }
-            });
-        }
-        dialog.set_extra_child(Some(&entry));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("open", "Open");
-        dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("open"));
-        dialog.connect_response(
-            None,
-            glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                #[weak]
-                entry,
-                move |_, resp| {
-                    if resp != "open" {
-                        return;
-                    }
-                    let text = entry.text().to_string();
-                    match super::nav_for_url(&text) {
-                        Some(nav) => win.navigate(nav),
-                        None if !text.trim().is_empty() => win.navigate(Nav::Search(text)),
-                        None => {}
-                    }
+        let win = self.downgrade();
+        self.shell().open_link_dialog(
+            "Open Link",
+            Some("A YouTube Music or YouTube link"),
+            "https://music.youtube.com/…",
+            |text| super::nav_for_url(text).is_some(),
+            move |text| {
+                let Some(win) = win.upgrade() else { return };
+                match super::nav_for_url(&text) {
+                    Some(nav) => win.navigate(nav),
+                    None if !text.trim().is_empty() => win.navigate(Nav::Search(text)),
+                    None => {}
                 }
-            ),
+            },
         );
-        dialog.present(Some(self));
     }
 }
 

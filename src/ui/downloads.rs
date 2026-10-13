@@ -192,7 +192,7 @@ pub fn downloads_page() -> adw::NavigationPage {
         win.expand_player();
     });
 
-    let header = adw::HeaderBar::new();
+    let header = common::shell::header_bar();
     let open = gtk::Button::from_icon_name("folder-open-symbolic");
     open.set_tooltip_text(Some("Open downloads folder"));
     open.connect_clicked(|b| {

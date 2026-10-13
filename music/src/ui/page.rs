@@ -20,43 +20,11 @@ pub fn primary_menu() -> gio::Menu {
     menu
 }
 
-/// The window button layout without the app icon: our logo already shows it,
-/// and layouts like "icon:minimize,maximize,close" would put the two side by side.
-fn decoration_layout() -> Option<String> {
-    let layout = gtk::Settings::default()?.gtk_decoration_layout()?;
-    let strip = |side: &str| {
-        side.split(',')
-            .map(str::trim)
-            .filter(|b| !b.is_empty() && *b != "icon")
-            .collect::<Vec<_>>()
-            .join(",")
-    };
-    Some(match layout.split_once(':') {
-        Some((start, end)) => format!("{}:{}", strip(start), strip(end)),
-        None => strip(&layout),
-    })
-}
-
-/// A header bar for the app's pages.
-pub fn header_bar() -> adw::HeaderBar {
-    let header = adw::HeaderBar::new();
-    if let Some(layout) = decoration_layout() {
-        header.set_decoration_layout(Some(&layout));
-    }
-    header
-}
+pub use common::shell::header_bar;
 
 /// The "▶ Music" logo.
 pub fn logo() -> gtk::Box {
-    let b = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-    b.add_css_class("app-logo");
-    let icon = gtk::Image::from_icon_name(config::APP_ID);
-    icon.set_pixel_size(26);
-    let label = gtk::Label::new(Some("Music"));
-    label.add_css_class("logo-text");
-    b.append(&icon);
-    b.append(&label);
-    b
+    common::shell::logo(config::APP_ID, "Music", 26)
 }
 
 pub struct Chrome {

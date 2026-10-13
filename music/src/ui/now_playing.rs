@@ -144,6 +144,11 @@ impl NowPlayingView {
         ))
     }
 
+    /// Give keyboard focus to the play button (e.g. after a layout switch took it away).
+    pub fn grab_play_focus(&self) {
+        self.imp().play.grab_focus();
+    }
+
     /// The area that drags the page down on a phone.
     pub fn drag_area(&self) -> gtk::Widget {
         self.imp().column.clone().upcast()

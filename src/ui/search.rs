@@ -82,7 +82,7 @@ impl SearchPage {
         imp.entry.set_search_delay(120);
         let clamp = adw::Clamp::builder().maximum_size(640).child(&imp.entry).build();
         clamp.set_hexpand(true);
-        let header = adw::HeaderBar::new();
+        let header = common::shell::header_bar();
         header.set_title_widget(Some(&clamp));
 
         imp.entry.connect_search_changed(glib::clone!(

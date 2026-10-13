@@ -1,11 +1,12 @@
 //! Main window: adaptive navigation (sidebar ↔ bottom bar), tabs, the watch sheet and mini player.
 
-use std::cell::{Cell, RefCell};
+use std::cell::{Cell, OnceCell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
 use common::sheet::{self, Hero, PlayerSheet};
-use gtk::{gdk, gio, glib};
+use common::shell::{self, Shell};
+use gtk::{gio, glib};
 
 use super::card::CardStyle;
 use super::channel::ChannelPage;
@@ -38,25 +39,15 @@ mod imp {
     #[derive(Default)]
     pub struct Window {
         pub playback: Playback,
-        pub toast_overlay: adw::ToastOverlay,
-        pub split: adw::OverlaySplitView,
-        pub stack: adw::ViewStack,
-        pub switcher_bar: adw::ViewSwitcherBar,
-        pub sidebar_nav: gtk::ListBox,
+        pub shell: OnceCell<Shell>,
         pub sidebar_subs: gtk::ListBox,
         pub sidebar_subs_title: gtk::Label,
-        pub navs: RefCell<Vec<(String, adw::NavigationView)>>,
         pub mini_revealer: gtk::Revealer,
         pub sheet: RefCell<Option<PlayerSheet>>,
         pub watch: RefCell<Option<WatchView>>,
-        pub narrow_only: RefCell<Vec<glib::WeakRef<gtk::Widget>>>,
-        pub wide_only: RefCell<Vec<glib::WeakRef<gtk::Widget>>>,
-        pub narrow: Cell<bool>,
         pub expanded: Cell<bool>,
         pub root_feeds: RefCell<Vec<(String, FeedView)>>,
         pub inhibit: Cell<u32>,
-        pub syncing_sidebar: Cell<bool>,
-        pub refocus_queued: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -72,7 +63,6 @@ mod imp {
             let obj = self.obj();
             obj.build();
             obj.setup_actions();
-            obj.setup_breakpoints();
             obj.bind_playback();
         }
     }
@@ -114,13 +104,7 @@ glib::wrapper! {
 impl Window {
     pub fn new(app: &adw::Application) -> Self {
         // SLOPTUBE_WINDOW_SIZE=390x844 is handy for trying phone/tablet layouts.
-        let (w, h) = std::env::var("SLOPTUBE_WINDOW_SIZE")
-            .ok()
-            .and_then(|s| {
-                let (w, h) = s.split_once('x')?;
-                Some((w.parse().ok()?, h.parse().ok()?))
-            })
-            .unwrap_or((1280, 820));
+        let (w, h) = shell::window_size("SLOPTUBE_WINDOW_SIZE", (1280, 820));
         glib::Object::builder()
             .property("application", app)
             .property("title", config::APP_NAME)
@@ -135,6 +119,10 @@ impl Window {
         self.imp().playback.clone()
     }
 
+    fn shell(&self) -> &Shell {
+        self.imp().shell.get().expect("window built")
+    }
+
     /// Allocated heights along the main column (diagnostics).
     pub fn debug_layout(&self) -> String {
         let imp = self.imp();
@@ -142,10 +130,10 @@ impl Window {
             "window {}x{} | stack {} | mini_revealer {} (reveal {}) | switcher {}",
             self.width(),
             self.height(),
-            imp.stack.height(),
+            self.shell().stack().height(),
             imp.mini_revealer.height(),
             imp.mini_revealer.reveals_child(),
-            imp.switcher_bar.height()
+            self.shell().switcher_bar().height()
         );
         if let Some(mini) = imp.mini_revealer.child() {
             let (min, nat, _, _) = mini.measure(gtk::Orientation::Vertical, mini.width());
@@ -176,33 +164,26 @@ impl Window {
     }
 
     pub fn toast(&self, message: &str) {
-        let t = adw::Toast::new(message);
-        t.set_timeout(3);
-        self.imp().toast_overlay.add_toast(t);
+        self.shell().toast(message);
     }
 
     pub fn register_narrow_only(&self, w: &impl IsA<gtk::Widget>) {
-        w.set_visible(self.imp().narrow.get());
-        self.imp().narrow_only.borrow_mut().push(w.upcast_ref::<gtk::Widget>().downgrade());
+        self.shell().register_narrow_only(w);
     }
 
     pub fn register_wide_only(&self, w: &impl IsA<gtk::Widget>) {
-        w.set_visible(!self.imp().narrow.get());
-        self.imp().wide_only.borrow_mut().push(w.upcast_ref::<gtk::Widget>().downgrade());
+        self.shell().register_wide_only(w);
     }
 
     fn build(&self) {
         let imp = self.imp();
         self.add_css_class("sloptube");
+        let logo = shell::logo(config::APP_ID, config::APP_NAME, 24);
+        let shell = Shell::new(self.upcast_ref(), &logo, (200.0, 240.0), 860);
+        imp.shell.set(shell.clone()).ok();
 
         // Tabs
         for (name, title, icon) in TABS {
-            let nav = adw::NavigationView::new();
-            nav.connect_visible_page_notify(|nav| {
-                if let Some(page) = nav.visible_page() {
-                    hide_content_while_unmapped(&page);
-                }
-            });
             let root = match name {
                 "home" => {
                     let (page, feed) = pages::home_page(self);
@@ -217,14 +198,13 @@ impl Window {
                 }
                 _ => pages::library_page(self),
             };
-            hide_content_while_unmapped(&root);
-            nav.add(&root);
-            let p = imp.stack.add_titled_with_icon(&nav, Some(name), title, icon);
-            p.set_use_underline(false);
-            imp.navs.borrow_mut().push((name.into(), nav));
+            shell.add_tab(name, title, icon, &root);
         }
-        imp.stack.set_vexpand(true);
-        imp.switcher_bar.set_stack(Some(&imp.stack));
+        shell.connect_tab_activated(glib::clone!(
+            #[weak(rename_to = win)]
+            self,
+            move || win.collapse_player()
+        ));
 
         // Mini player (stays laid out under the sheet while a video is open)
         let mini = MiniPlayer::new(&imp.playback);
@@ -234,52 +214,11 @@ impl Window {
         imp.mini_revealer.set_vexpand(false);
 
         let main_box = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        main_box.append(&imp.stack);
+        main_box.append(shell.stack());
         main_box.append(&imp.mini_revealer);
-        main_box.append(&imp.switcher_bar);
+        main_box.append(shell.switcher_bar());
 
-        // Sidebar
-        imp.sidebar_nav.add_css_class("navigation-sidebar");
-        for (name, title, icon) in TABS {
-            let row = gtk::ListBoxRow::new();
-            row.set_widget_name(name);
-            let b = gtk::Box::new(gtk::Orientation::Horizontal, 12);
-            b.append(&gtk::Image::from_icon_name(icon));
-            b.append(&gtk::Label::new(Some(title)));
-            row.set_child(Some(&b));
-            imp.sidebar_nav.append(&row);
-        }
-        // The selection only mirrors the visible tab. GTK also selects rows when focus
-        // moves into the sidebar, as it does when the player collapses and hides the
-        // focused button, so tabs switch on activation (a tap or Enter) instead.
-        imp.sidebar_nav.connect_row_selected(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_, _| {
-                if !win.imp().syncing_sidebar.get() {
-                    win.sync_sidebar();
-                }
-            }
-        ));
-        imp.sidebar_nav.connect_row_activated(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_, row| {
-                let name = row.widget_name();
-                if win.imp().stack.visible_child_name().as_deref() == Some(name.as_str()) {
-                    // Tapping the tab that is showing returns to its root.
-                    win.current_nav().pop_to_tag(&name);
-                }
-                win.imp().stack.set_visible_child_name(&name);
-                win.collapse_player();
-            }
-        ));
-        imp.stack.connect_visible_child_name_notify(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| win.sync_sidebar()
-        ));
-        self.sync_sidebar();
+        // Sidebar: the subscriptions below the tabs.
         imp.sidebar_subs.add_css_class("navigation-sidebar");
         imp.sidebar_subs.set_selection_mode(gtk::SelectionMode::None);
         imp.sidebar_subs.connect_row_activated(|list, row| {
@@ -289,34 +228,9 @@ impl Window {
         imp.sidebar_subs_title.set_xalign(0.0);
         imp.sidebar_subs_title.add_css_class("heading");
         imp.sidebar_subs_title.add_css_class("sidebar-section");
-        let sidebar_box = gtk::Box::new(gtk::Orientation::Vertical, 6);
-        sidebar_box.append(&imp.sidebar_nav);
-        sidebar_box.append(&imp.sidebar_subs_title);
-        sidebar_box.append(&imp.sidebar_subs);
-        let sidebar_scroll = gtk::ScrolledWindow::builder()
-            .child(&sidebar_box)
-            .hscrollbar_policy(gtk::PolicyType::Never)
-            .vexpand(true)
-            .build();
-        let sidebar_header = adw::HeaderBar::new();
-        sidebar_header.set_show_title(false);
-        let logo = gtk::Box::new(gtk::Orientation::Horizontal, 6);
-        logo.add_css_class("app-logo");
-        let icon = gtk::Image::from_icon_name(config::APP_ID);
-        icon.set_pixel_size(24);
-        let label = gtk::Label::new(Some(config::APP_NAME));
-        label.add_css_class("logo-text");
-        logo.append(&icon);
-        logo.append(&label);
-        sidebar_header.pack_start(&logo);
-        let sidebar_tv = adw::ToolbarView::new();
-        sidebar_tv.add_top_bar(&sidebar_header);
-        sidebar_tv.set_content(Some(&sidebar_scroll));
-
-        imp.split.set_sidebar(Some(&sidebar_tv));
-        imp.split.set_content(Some(&main_box));
-        imp.split.set_min_sidebar_width(200.0);
-        imp.split.set_max_sidebar_width(240.0);
+        shell.sidebar().append(&imp.sidebar_subs_title);
+        shell.sidebar().append(&imp.sidebar_subs);
+        shell.split().set_content(Some(&main_box));
 
         // Watch sheet: drag the video down into the mini player and back up.
         let watch = WatchView::new(&imp.playback);
@@ -386,10 +300,10 @@ impl Window {
         imp.sheet.replace(Some(sheet.clone()));
 
         let root_overlay = gtk::Overlay::new();
-        root_overlay.set_child(Some(&imp.split));
+        root_overlay.set_child(Some(shell.split()));
         root_overlay.add_overlay(&sheet);
-        imp.toast_overlay.set_child(Some(&root_overlay));
-        self.set_content(Some(&imp.toast_overlay));
+        shell.toast_overlay().set_child(Some(&root_overlay));
+        self.set_content(Some(shell.toast_overlay()));
 
         self.setup_watch_shortcuts(&watch);
         self.connect_fullscreened_notify(|win| {
@@ -401,26 +315,22 @@ impl Window {
                 s.set_locked(fs);
             }
         });
-        // Keep keyboard focus in the player while it covers the window. Crossing a
-        // breakpoint (Super+F fullscreen, or a resize) hides the content for a frame;
-        // GTK moves focus away and libadwaita replays that as Tab presses on the next
-        // frame, which end up on a sidebar row or header button behind the sheet.
-        // Check once that replay has run.
-        self.connect_focus_widget_notify(|win| {
-            if !win.imp().expanded.get() || win.imp().refocus_queued.replace(true) {
-                return;
-            }
-            win.add_tick_callback(|win, _| {
-                let win = win.downgrade();
-                glib::idle_add_local_once(move || {
-                    if let Some(win) = win.upgrade() {
-                        win.imp().refocus_queued.set(false);
-                        win.keep_focus_in_player();
-                    }
-                });
-                glib::ControlFlow::Break
-            });
-        });
+        // Keep keyboard focus in the player while it covers the window.
+        shell.keep_focus_in(
+            &sheet,
+            glib::clone!(
+                #[weak(rename_to = win)]
+                self,
+                #[upgrade_or]
+                false,
+                move || win.imp().expanded.get()
+            ),
+            glib::clone!(
+                #[weak]
+                watch,
+                move || watch.player_view().grab_player_focus()
+            ),
+        );
 
         // Sidebar subscriptions follow the account.
         let account = Account::get();
@@ -471,56 +381,6 @@ impl Window {
                 win.imp().sidebar_subs.append(&row);
             }
         });
-    }
-
-    fn setup_breakpoints(&self) {
-        let bp = adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 860sp").unwrap());
-        bp.connect_apply(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| win.set_narrow(true)
-        ));
-        bp.connect_unapply(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| win.set_narrow(false)
-        ));
-        self.add_breakpoint(bp);
-        // Phones: one column, edge-to-edge thumbnails like the YouTube app.
-        let phone = adw::Breakpoint::new(adw::BreakpointCondition::parse("max-width: 520sp").unwrap());
-        phone.connect_apply(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| win.add_css_class("phone")
-        ));
-        phone.connect_unapply(glib::clone!(
-            #[weak(rename_to = win)]
-            self,
-            move |_| win.remove_css_class("phone")
-        ));
-        self.add_breakpoint(phone);
-        self.set_narrow(false);
-    }
-
-    fn set_narrow(&self, narrow: bool) {
-        let imp = self.imp();
-        imp.narrow.set(narrow);
-        imp.split.set_collapsed(narrow);
-        imp.split.set_show_sidebar(!narrow);
-        imp.switcher_bar.set_reveal(narrow);
-        if narrow {
-            self.add_css_class("narrow");
-        } else {
-            self.remove_css_class("narrow");
-        }
-        imp.narrow_only.borrow_mut().retain(|w| w.upgrade().is_some());
-        imp.wide_only.borrow_mut().retain(|w| w.upgrade().is_some());
-        for w in imp.narrow_only.borrow().iter().filter_map(|w| w.upgrade()) {
-            w.set_visible(narrow);
-        }
-        for w in imp.wide_only.borrow().iter().filter_map(|w| w.upgrade()) {
-            w.set_visible(!narrow);
-        }
     }
 
     fn bind_playback(&self) {
@@ -659,7 +519,7 @@ impl Window {
         action("sign-in", |w| super::login::present(w));
         action("sign-out", |w| super::login::confirm_sign_out(w));
         action("show-downloads", |w| {
-            w.imp().stack.set_visible_child_name("library");
+            w.shell().stack().set_visible_child_name("library");
             w.collapse_player();
             let nav = w.current_nav();
             if nav.find_page("downloads").is_none() {
@@ -668,7 +528,7 @@ impl Window {
         });
         action("show-explore", |w| {
             w.collapse_player();
-            w.imp().stack.set_visible_child_name("explore");
+            w.shell().stack().set_visible_child_name("explore");
         });
         action("show-channels", |w| {
             let (page, _) = pages::feed_page("Channels", pages::browse_loader("FEchannels"), CardStyle::GRID);
@@ -682,32 +542,8 @@ impl Window {
         action("play-pause", |w| w.playback().toggle());
     }
 
-    /// Select the visible tab's row in the sidebar.
-    fn sync_sidebar(&self) {
-        let imp = self.imp();
-        let name = imp.stack.visible_child_name().unwrap_or_default();
-        imp.syncing_sidebar.set(true);
-        let mut child = imp.sidebar_nav.first_child();
-        while let Some(c) = child {
-            if let Some(row) = c.downcast_ref::<gtk::ListBoxRow>() {
-                if row.widget_name() == name {
-                    imp.sidebar_nav.select_row(Some(row));
-                }
-            }
-            child = c.next_sibling();
-        }
-        imp.syncing_sidebar.set(false);
-    }
-
     fn current_nav(&self) -> adw::NavigationView {
-        let imp = self.imp();
-        let name = imp.stack.visible_child_name().unwrap_or_default();
-        imp.navs
-            .borrow()
-            .iter()
-            .find(|(n, _)| *n == name)
-            .map(|(_, v)| v.clone())
-            .unwrap_or_else(|| imp.navs.borrow()[0].1.clone())
+        self.shell().current_nav()
     }
 
     fn push_page(&self, page: &impl IsA<adw::NavigationPage>) {
@@ -808,23 +644,6 @@ impl Window {
         }
     }
 
-    fn keep_focus_in_player(&self) {
-        let imp = self.imp();
-        let (Some(sheet), Some(watch)) = (imp.sheet.borrow().clone(), imp.watch.borrow().clone()) else { return };
-        if !imp.expanded.get() {
-            return;
-        }
-        // Dialogs and menus may take focus from the player.
-        let lost = GtkWindowExt::focus(self).is_none_or(|f| {
-            !f.is_ancestor(&sheet)
-                && f.ancestor(adw::Dialog::static_type()).is_none()
-                && f.ancestor(gtk::Popover::static_type()).is_none()
-        });
-        if lost {
-            watch.player_view().grab_player_focus();
-        }
-    }
-
     pub fn toggle_fullscreen(&self) {
         if self.is_fullscreen() {
             self.unfullscreen();
@@ -836,7 +655,7 @@ impl Window {
 
     fn refresh(&self) {
         let imp = self.imp();
-        let name = imp.stack.visible_child_name().unwrap_or_default();
+        let name = self.shell().visible_tab();
         if self.current_nav().navigation_stack().n_items() > 1 {
             return;
         }
@@ -851,70 +670,20 @@ impl Window {
     }
 
     fn open_link_dialog(&self) {
-        let dialog = adw::AlertDialog::new(Some("Open YouTube Link"), None);
-        let entry = gtk::Entry::builder()
-            .placeholder_text("https://www.youtube.com/watch?v=…")
-            .activates_default(true)
-            .build();
-        if let Some(display) = gdk::Display::default() {
-            // Prefill from the clipboard when it holds a YouTube link.
-            let entry = entry.downgrade();
-            display.clipboard().read_text_async(gio::Cancellable::NONE, move |res| {
-                if let (Ok(Some(text)), Some(entry)) = (res, entry.upgrade()) {
-                    if super::nav_for_youtube_url(&text).is_some() && entry.text().is_empty() {
-                        entry.set_text(text.trim());
-                        entry.select_region(0, -1);
-                    }
-                }
-            });
-        }
-        dialog.set_extra_child(Some(&entry));
-        dialog.add_response("cancel", "Cancel");
-        dialog.add_response("open", "Open");
-        dialog.set_response_appearance("open", adw::ResponseAppearance::Suggested);
-        dialog.set_default_response(Some("open"));
-        dialog.connect_response(
+        let win = self.downgrade();
+        self.shell().open_link_dialog(
+            "Open YouTube Link",
             None,
-            glib::clone!(
-                #[weak(rename_to = win)]
-                self,
-                #[weak]
-                entry,
-                move |_, resp| {
-                    if resp != "open" {
-                        return;
-                    }
-                    let text = entry.text().to_string();
-                    match super::nav_for_youtube_url(&text) {
-                        Some(nav) => win.navigate(nav),
-                        None if !text.trim().is_empty() => win.navigate(Nav::Search(text)),
-                        None => {}
-                    }
+            "https://www.youtube.com/watch?v=…",
+            |text| super::nav_for_youtube_url(text).is_some(),
+            move |text| {
+                let Some(win) = win.upgrade() else { return };
+                match super::nav_for_youtube_url(&text) {
+                    Some(nav) => win.navigate(nav),
+                    None if !text.trim().is_empty() => win.navigate(Nav::Search(text)),
+                    None => {}
                 }
-            ),
+            },
         );
-        dialog.present(Some(self));
     }
-}
-
-/// On every press and release GTK sets `:active` on each widget from the one
-/// pressed up to the window, and that restyles every widget in the window whose
-/// style depends on an ancestor's state. CSS only skips hidden widgets, not
-/// pages that stacks merely stop drawing, so each touch restyled every feed in
-/// the other tabs and the back stack (15-25 ms per press and release). Hide a
-/// page's content while the page is off screen to keep it out of that.
-fn hide_content_while_unmapped(page: &adw::NavigationPage) {
-    // SAFETY: the key is only ever used with `()`.
-    if unsafe { page.data::<()>("sloptube-hides-content") }.is_some() {
-        return;
-    }
-    unsafe { page.set_data("sloptube-hides-content", ()) };
-    let sync = |page: &adw::NavigationPage| {
-        if let Some(child) = page.child() {
-            child.set_visible(page.is_mapped());
-        }
-    };
-    page.connect_map(sync);
-    page.connect_unmap(sync);
-    sync(page);
 }

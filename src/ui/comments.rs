@@ -71,7 +71,7 @@ impl CommentsPage {
 
     fn build(&self, with_sort: bool) {
         let imp = self.imp();
-        let header = adw::HeaderBar::new();
+        let header = common::shell::header_bar();
         header.set_show_end_title_buttons(false);
         header.set_show_start_title_buttons(false);
         if with_sort {
