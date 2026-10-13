@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 use common::innertube::json::{
     command_token as continuation_token, find_all, fix_url, looks_like_duration, parse_duration, str_at, thumbnails,
 };
-pub use common::innertube::json::{find_key, parse_account_menu, text};
+pub use common::innertube::json::{find_key, text};
 use serde_json::Value;
 
 use super::model::*;

@@ -231,5 +231,16 @@ mod tests {
         assert!(a.avatar.unwrap().starts_with("https://yt3.ggpht.com/x=w96-h96"));
         let signed_out = json!({"activeAccountHeaderRenderer": {"accountName": {"simpleText": ""}}});
         assert!(parse_account_menu(&signed_out).is_none());
+        assert!(parse_account_menu(&json!({"actions": []})).is_none());
+        // The shape the account menu really has.
+        let v = json!({"actions": [{"openPopupAction": {"popup": {"multiPageMenuRenderer": {"header": {
+            "activeAccountHeaderRenderer": {
+                "accountName": {"runs": [{"text": "Ada"}]},
+                "channelHandle": {"runs": [{"text": "@ada"}]},
+                "accountPhoto": {"thumbnails": [{"url": "https://yt3.ggpht.com/abc=s88-c-k", "width": 88, "height": 88}]}
+            }}}}}}]});
+        let a = parse_account_menu(&v).unwrap();
+        assert_eq!((a.name.as_str(), a.handle.as_deref()), ("Ada", Some("@ada")));
+        assert!(a.avatar.unwrap().ends_with("=w96-h96-l90-rj"));
     }
 }

@@ -107,7 +107,7 @@ pub fn write_manifest(info: &StreamInfo, video: &Format, audio: &Format) -> Opti
         .map(|c| if c.is_ascii_alphanumeric() || c == '-' || c == '_' { c } else { '_' })
         .collect();
     let path = config::runtime_dir().join(format!("{safe}-{}-{}.mpd", video.format_id, audio.format_id));
-    if let Err(e) = crate::auth::write_private(&path, xml.as_bytes()) {
+    if let Err(e) = common::paths::write_private(&path, xml.as_bytes()) {
         log::warn!("cannot write DASH manifest: {e}");
         return None;
     }

@@ -5,7 +5,7 @@
 //! whose layout changes tends to lose a field rather than the whole page.
 
 use common::innertube::json::{continuation, find_all, find_thumbnails, parse_duration, str_at, string_at};
-pub use common::innertube::json::{find_key, parse_account_menu, text};
+pub use common::innertube::json::{find_key, text};
 use serde_json::Value;
 
 use super::model::*;
@@ -1119,21 +1119,6 @@ mod tests {
             assert!(page.tracks.len() >= 10);
             assert!(page.tracks.iter().all(|t| !t.artists.is_empty() && t.duration.is_some()));
         }
-    }
-
-    #[test]
-    fn account_menu() {
-        let v = serde_json::json!({"actions": [{"openPopupAction": {"popup": {"multiPageMenuRenderer": {"header": {
-            "activeAccountHeaderRenderer": {
-                "accountName": {"runs": [{"text": "Ada"}]},
-                "channelHandle": {"runs": [{"text": "@ada"}]},
-                "accountPhoto": {"thumbnails": [{"url": "https://yt3.ggpht.com/abc=s88-c-k", "width": 88, "height": 88}]}
-            }}}}}}]});
-        let a = parse_account_menu(&v).unwrap();
-        assert_eq!(a.name, "Ada");
-        assert_eq!(a.handle.as_deref(), Some("@ada"));
-        assert!(a.avatar.unwrap().ends_with("=w96-h96-l90-rj"));
-        assert!(parse_account_menu(&serde_json::json!({"actions": []})).is_none());
     }
 
     #[test]

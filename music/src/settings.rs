@@ -65,8 +65,6 @@ pub struct Settings {
     pub use_account_for_streams: bool,
     /// Add songs played here to the account's YouTube history.
     pub send_history: bool,
-    /// A session was stored; without one, startup doesn't touch the keyring.
-    pub has_session: bool,
 }
 
 impl Default for Settings {
@@ -84,7 +82,6 @@ impl Default for Settings {
             save_search_history: true,
             use_account_for_streams: true,
             send_history: true,
-            has_session: false,
         }
     }
 }

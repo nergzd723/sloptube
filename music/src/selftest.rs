@@ -119,7 +119,7 @@ pub async fn run() -> Result<()> {
 
 /// With a stored session: who is signed in, and how much each library section returns.
 async fn account() -> Result<()> {
-    if !crate::settings::get().has_session && !crate::auth::fallback_exists() {
+    if !crate::auth::may_have_session() {
         println!("account: not signed in (sign in in the app to check the library)");
         return Ok(());
     }
@@ -128,7 +128,7 @@ async fn account() -> Result<()> {
         return Ok(());
     };
     let c = api::client();
-    c.set_session(Some(session));
+    common::session::set(Some(session));
     let info = c.account_info().await.context("account menu")?;
     match info {
         Some(a) => println!("account: signed in as {} {}", a.name, a.handle.unwrap_or_default()),

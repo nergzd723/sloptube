@@ -1,4 +1,5 @@
-//! Google account session: cookie jar, SAPISIDHASH authorization and secure storage.
+//! The Google session both apps use: cookie jar, SAPISIDHASH authorization,
+//! secure storage, and importing it from a browser.
 
 pub mod chromium;
 pub mod firefox;
@@ -9,12 +10,12 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use sha1::{Digest, Sha1};
 
-use crate::api::model::AccountInfo;
-use crate::config;
+use crate::innertube::model::AccountInfo;
+use crate::paths;
 
-/// Requests are signed for the YouTube Music origin.
-pub const ORIGIN: &str = "https://music.youtube.com";
-pub const HOST: &str = "music.youtube.com";
+/// The session's own cookies (`SAPISID`, `SID`, ...) live on `.youtube.com`, so
+/// any YouTube host finds them; this one is used to look them up.
+const YT_HOST: &str = "www.youtube.com";
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Cookie {
@@ -44,7 +45,7 @@ pub struct Session {
     pub cookies: Vec<Cookie>,
     #[serde(default)]
     pub account: Option<AccountInfo>,
-    /// How the session was obtained ("webkit", "chromium", "firefox").
+    /// How the session was obtained ("webkit", "chromium", ...).
     #[serde(default)]
     pub source: String,
 }
@@ -107,27 +108,28 @@ impl Session {
     }
 
     fn sapisid(&self) -> Option<&str> {
-        self.get(HOST, "SAPISID")
-            .or_else(|| self.get(HOST, "__Secure-3PAPISID"))
+        self.get(YT_HOST, "SAPISID")
+            .or_else(|| self.get(YT_HOST, "__Secure-3PAPISID"))
     }
 
     pub fn is_signed_in(&self) -> bool {
         self.sapisid().is_some()
-            && (self.get(HOST, "SID").is_some()
-                || self.get(HOST, "__Secure-3PSID").is_some()
-                || self.get(HOST, "__Secure-1PSID").is_some())
+            && (self.get(YT_HOST, "SID").is_some()
+                || self.get(YT_HOST, "__Secure-3PSID").is_some()
+                || self.get(YT_HOST, "__Secure-1PSID").is_some())
     }
 
-    /// Value for the `Authorization` header of InnerTube requests.
-    pub fn authorization(&self) -> Option<String> {
+    /// Value for the `Authorization` header of InnerTube requests sent from
+    /// `origin` (`https://www.youtube.com`, `https://music.youtube.com`).
+    pub fn authorization(&self, origin: &str) -> Option<String> {
         let ts = now();
         let sapisid = self.sapisid()?;
-        let mut parts = vec![format!("SAPISIDHASH {}", sid_hash(ts, sapisid, ORIGIN))];
-        if let Some(p1) = self.get(HOST, "__Secure-1PAPISID") {
-            parts.push(format!("SAPISID1PHASH {}", sid_hash(ts, p1, ORIGIN)));
+        let mut parts = vec![format!("SAPISIDHASH {}", sid_hash(ts, sapisid, origin))];
+        if let Some(p1) = self.get(YT_HOST, "__Secure-1PAPISID") {
+            parts.push(format!("SAPISID1PHASH {}", sid_hash(ts, p1, origin)));
         }
-        if let Some(p3) = self.get(HOST, "__Secure-3PAPISID") {
-            parts.push(format!("SAPISID3PHASH {}", sid_hash(ts, p3, ORIGIN)));
+        if let Some(p3) = self.get(YT_HOST, "__Secure-3PAPISID") {
+            parts.push(format!("SAPISID3PHASH {}", sid_hash(ts, p3, origin)));
         }
         Some(parts.join(" "))
     }
@@ -267,15 +269,38 @@ fn parse_cookie_date(s: &str) -> Option<i64> {
 // Storage: Secret Service (gnome-keyring, KWallet, ...) with a private file fallback
 // ---------------------------------------------------------------------------
 
-const ATTRS: [(&str, &str); 2] = [("application", config::APP_ID), ("type", "youtube-session")];
+/// The one stored session. Music kept its own until both apps shared one; its
+/// item is read once to carry a sign-in over (see `load_with_legacy`).
+const ATTRS: [(&str, &str); 2] = [("application", "io.github.nergzd.SlopTube"), ("type", "youtube-session")];
+const LEGACY_ATTRS: [(&str, &str); 2] = [("application", "io.github.nergzd.SlopTubeMusic"), ("type", "youtube-session")];
 
 fn fallback_path() -> std::path::PathBuf {
-    config::data_dir().join("session.json")
+    paths::data_dir("sloptube").join("session.json")
 }
 
-/// A session saved in the private file (when there was no keyring).
-pub fn fallback_exists() -> bool {
-    fallback_path().exists()
+// Not `paths::data_dir`, which would create Music's old directory.
+fn legacy_fallback_path() -> std::path::PathBuf {
+    gtk::glib::user_data_dir().join("sloptube-music").join("session.json")
+}
+
+/// Remembers whether a session is stored, so that startup without one doesn't
+/// wake the keyring (it may ask to be unlocked). Unknown until the first load.
+fn marker_path() -> std::path::PathBuf {
+    paths::data_dir("sloptube").join("has-session")
+}
+
+/// Whether a session may be stored: unknown (never checked) counts as yes.
+pub fn may_have_session() -> bool {
+    match std::fs::read_to_string(marker_path()) {
+        Ok(s) => s.trim() != "no" || fallback_path().exists() || legacy_fallback_path().exists(),
+        Err(_) => true,
+    }
+}
+
+pub fn set_has_session(has: bool) {
+    if let Err(e) = paths::write_atomic(&marker_path(), if has { b"yes" } else { b"no" }) {
+        log::warn!("cannot write the session marker: {e}");
+    }
 }
 
 async fn keyring() -> Result<oo7::Keyring> {
@@ -284,75 +309,118 @@ async fn keyring() -> Result<oo7::Keyring> {
     Ok(k)
 }
 
+async fn read_item(k: &oo7::Keyring, attrs: &[(&str, &str); 2]) -> Option<Session> {
+    match k.search_items(attrs).await {
+        Ok(items) => match items.first()?.secret().await {
+            Ok(secret) => match serde_json::from_slice(secret.as_bytes()) {
+                Ok(s) => Some(s),
+                Err(e) => {
+                    log::warn!("stored session is corrupt: {e}");
+                    None
+                }
+            },
+            Err(e) => {
+                log::warn!("cannot read session secret: {e}");
+                None
+            }
+        },
+        Err(e) => {
+            log::warn!("keyring search failed: {e}");
+            None
+        }
+    }
+}
+
+fn read_file(path: std::path::PathBuf) -> Option<Session> {
+    serde_json::from_slice(&std::fs::read(path).ok()?).ok()
+}
+
+/// Load the stored session, and the one SlopTube Music stored before the apps
+/// shared one (must run on the tokio runtime). One keyring connection serves
+/// both: without a Secret Service, connecting takes a while to time out.
+pub async fn load_with_legacy() -> (Option<Session>, Option<Session>) {
+    let (current, legacy) = match keyring().await {
+        Ok(k) => (read_item(&k, &ATTRS).await, read_item(&k, &LEGACY_ATTRS).await),
+        Err(e) => {
+            log::info!("keyring unavailable ({e:#}), using file fallback");
+            (None, None)
+        }
+    };
+    (
+        current.or_else(|| read_file(fallback_path())),
+        legacy.or_else(|| read_file(legacy_fallback_path())),
+    )
+}
+
 /// Load the stored session (must run on the tokio runtime).
 pub async fn load() -> Option<Session> {
     match keyring().await {
-        Ok(k) => match k.search_items(&ATTRS).await {
-            Ok(items) => {
-                if let Some(item) = items.first() {
-                    match item.secret().await {
-                        Ok(secret) => match serde_json::from_slice(secret.as_bytes()) {
-                            Ok(s) => return Some(s),
-                            Err(e) => log::warn!("stored session is corrupt: {e}"),
-                        },
-                        Err(e) => log::warn!("cannot read session secret: {e}"),
-                    }
-                }
-            }
-            Err(e) => log::warn!("keyring search failed: {e}"),
-        },
-        Err(e) => log::info!("keyring unavailable ({e:#}), using file fallback"),
+        Ok(k) => read_item(&k, &ATTRS).await,
+        Err(e) => {
+            log::info!("keyring unavailable ({e:#}), using file fallback");
+            None
+        }
     }
-    let data = std::fs::read(fallback_path()).ok()?;
-    serde_json::from_slice(&data).ok()
+    .or_else(|| read_file(fallback_path()))
+}
+
+/// Forget Music's old session (once the shared one is settled).
+pub async fn clear_legacy() {
+    // Files first: the keyring may take a while to answer, or never.
+    let _ = std::fs::remove_file(legacy_fallback_path());
+    if let Ok(k) = keyring().await
+        && let Err(e) = k.delete(&LEGACY_ATTRS).await
+    {
+        log::warn!("failed to delete Music's old session from the keyring: {e}");
+    }
 }
 
 pub async fn store(session: &Session) -> Result<()> {
     let data = serde_json::to_vec(session)?;
     match keyring().await {
         Ok(k) => {
-            k.create_item("SlopTube Music YouTube session", &ATTRS, data, true)
-                .await?;
+            k.create_item("SlopTube YouTube session", &ATTRS, data, true).await?;
             let _ = std::fs::remove_file(fallback_path());
             Ok(())
         }
         Err(e) => {
             log::warn!("storing session in a private file because the keyring is unavailable: {e:#}");
-            write_private(&fallback_path(), &data)
+            paths::write_private(&fallback_path(), &data)?;
+            Ok(())
         }
     }
 }
 
+/// Forget the session, including the cookie files handed to yt-dlp.
 pub async fn clear() {
-    if let Ok(k) = keyring().await
-        && let Err(e) = k.delete(&ATTRS).await {
-            log::warn!("failed to delete session from keyring: {e}");
-        }
+    // Files first: the keyring may take a while to answer, or never.
     let _ = std::fs::remove_file(fallback_path());
-    let _ = std::fs::remove_file(cookie_file_path());
+    for name in COOKIE_FILES {
+        let _ = std::fs::remove_file(cookie_file_path(name));
+    }
+    // Where each app kept its cookie file before they shared the session.
+    let _ = std::fs::remove_file(paths::runtime_dir("sloptube").join("cookies.txt"));
+    let _ = std::fs::remove_file(gtk::glib::user_runtime_dir().join("sloptube-music").join("cookies.txt"));
+    if let Ok(k) = keyring().await
+        && let Err(e) = k.delete(&ATTRS).await
+    {
+        log::warn!("failed to delete session from keyring: {e}");
+    }
 }
 
-pub fn write_private(path: &std::path::Path, data: &[u8]) -> Result<()> {
-    use std::io::Write;
-    #[cfg(unix)]
-    use std::os::unix::fs::OpenOptionsExt;
-    let mut opts = std::fs::OpenOptions::new();
-    opts.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    opts.mode(0o600);
-    let mut f = opts.open(path)?;
-    f.write_all(data)?;
-    Ok(())
+/// The cookie files handed to yt-dlp, one per app, so that one never reads the
+/// other's while it's being rewritten.
+const COOKIE_FILES: [&str; 2] = ["video", "music"];
+
+/// Cookie jar handed to yt-dlp (`name`: "video" or "music"), in the per-session
+/// runtime directory.
+pub fn cookie_file_path(name: &str) -> std::path::PathBuf {
+    paths::runtime_dir("sloptube").join(format!("cookies-{name}.txt"))
 }
 
-/// Cookie jar handed to yt-dlp, kept in the per-session runtime directory.
-pub fn cookie_file_path() -> std::path::PathBuf {
-    config::runtime_dir().join("cookies.txt")
-}
-
-pub fn write_cookie_file(session: &Session) -> Result<std::path::PathBuf> {
-    let path = cookie_file_path();
-    write_private(&path, session.to_netscape().as_bytes())?;
+pub fn write_cookie_file(session: &Session, name: &str) -> Result<std::path::PathBuf> {
+    let path = cookie_file_path(name);
+    paths::write_private(&path, session.to_netscape().as_bytes())?;
     Ok(path)
 }
 
@@ -375,8 +443,8 @@ mod tests {
         ));
         assert!(s.apply_set_cookie("SID=x; Max-Age=3600; domain=.youtube.com", "www.youtube.com"));
         assert!(s.is_signed_in());
-        assert!(s.cookie_header(HOST).contains("SAPISID=abc"));
-        assert!(s.authorization().unwrap().starts_with("SAPISIDHASH "));
+        assert!(s.cookie_header("www.youtube.com").contains("SAPISID=abc"));
+        assert!(s.authorization("https://www.youtube.com").unwrap().starts_with("SAPISIDHASH "));
         // Deletion via an expired date
         assert!(s.apply_set_cookie(
             "SID=; expires=Thu, 01 Jan 1970 00:00:01 GMT; domain=.youtube.com",

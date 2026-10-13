@@ -35,3 +35,20 @@ pub fn write_atomic(path: &Path, data: &[u8]) -> std::io::Result<()> {
     std::fs::write(&tmp, data)?;
     std::fs::rename(&tmp, path)
 }
+
+/// Write a file only the user can read, atomically.
+pub fn write_private(path: &Path, data: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    #[cfg(unix)]
+    use std::os::unix::fs::OpenOptionsExt;
+    let mut tmp = path.as_os_str().to_owned();
+    tmp.push(".tmp");
+    let mut opts = std::fs::OpenOptions::new();
+    opts.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    opts.mode(0o600);
+    let mut f = opts.open(&tmp)?;
+    f.write_all(data)?;
+    drop(f);
+    std::fs::rename(&tmp, path)
+}

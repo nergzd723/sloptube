@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use common::innertube::model::{AccountInfo, LikeStatus, Thumbnail, pick_thumbnail};
+pub use common::innertube::model::{LikeStatus, Thumbnail, pick_thumbnail};
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct VideoItem {

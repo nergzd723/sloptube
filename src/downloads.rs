@@ -285,8 +285,8 @@ impl Downloads {
             args.push("mkv".into());
         }
         if settings::get().use_account_for_streams {
-            if let Some(s) = api::client().session().filter(|s| s.is_signed_in()) {
-                if let Ok(p) = auth::write_cookie_file(&s) {
+            if let Some(s) = common::session::get().filter(|s| s.is_signed_in()) {
+                if let Ok(p) = auth::write_cookie_file(&s, "video") {
                     args.push("--cookies".into());
                     args.push(p.to_string_lossy().into_owned());
                 }

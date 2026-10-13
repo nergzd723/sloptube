@@ -4,7 +4,7 @@ use adw::prelude::*;
 use gtk::glib;
 
 use crate::account::Account;
-use crate::auth::{self, Session, chromium};
+use crate::auth::{Session, chromium};
 use crate::runtime;
 
 #[cfg(all(feature = "webkit", target_os = "linux"))]
@@ -229,7 +229,6 @@ pub fn confirm_sign_out(parent: &impl IsA<gtk::Widget>) {
     alert.connect_response(None, |_, resp| {
         if resp == "sign-out" {
             Account::get().sign_out();
-            let _ = auth::cookie_file_path();
         }
     });
     alert.present(Some(parent));

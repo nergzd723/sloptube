@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-pub use common::innertube::model::{AccountInfo, LikeStatus, Thumbnail, thumb_url};
+pub use common::innertube::model::{LikeStatus, Thumbnail, thumb_url};
 
 /// What a browse id leads to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]

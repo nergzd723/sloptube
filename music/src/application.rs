@@ -49,7 +49,12 @@ fn start(app: &adw::Application) {
             log::debug!("could not refresh the client version: {e:#}");
         }
     });
-    Account::get().load_stored();
+    // The account is shared with SlopTube, which has usually loaded it already.
+    let account = Account::get();
+    account.load_stored();
+    account.connect_session_changed(crate::account::update_stream_cookies);
+    account.connect_expired(|| ui::toast("Your YouTube session expired. Please sign in again."));
+    crate::account::update_stream_cookies();
     crate::image::warm_up_connections();
     let pb = Playback::get();
     // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.

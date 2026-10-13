@@ -10,7 +10,6 @@
 mod account;
 mod api;
 mod application;
-mod auth;
 mod config;
 mod extractor;
 mod image;
@@ -24,7 +23,7 @@ mod selftest;
 mod settings;
 mod ui;
 
-use common::{memory, runtime};
+use common::{auth, memory, runtime};
 
 pub use application::*;
 

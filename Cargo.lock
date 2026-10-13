@@ -2772,12 +2772,21 @@ dependencies = [
 name = "sloptube-common"
 version = "0.1.0"
 dependencies = [
+ "aes",
+ "anyhow",
+ "cbc",
  "gtk4",
+ "hex",
  "libadwaita",
  "libc",
  "log",
+ "oo7",
+ "pbkdf2",
+ "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
+ "sha1",
  "tokio",
  "url",
 ]

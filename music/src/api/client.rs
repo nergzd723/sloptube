@@ -1,250 +1,36 @@
-//! InnerTube HTTP client (YouTube Music web client, `WEB_REMIX`).
+//! Music's InnerTube endpoints, on the shared `WEB_REMIX` client core
+//! (`common::innertube::client`: context, signing, visitor data, errors).
 
-use std::sync::{Arc, OnceLock, RwLock};
+use std::ops::Deref;
+use std::sync::OnceLock;
 
-use anyhow::{Context, Result, bail};
-use reqwest::header::{self, HeaderMap, HeaderValue};
-use serde_json::{Value, json};
+use anyhow::{Result, bail};
+use common::innertube::client as core;
+pub use common::innertube::client::{USER_AGENT, http};
+use serde_json::json;
 
 use super::model::*;
 use super::parse;
-use crate::auth::{self, Session};
 
-const BASE: &str = "https://music.youtube.com/youtubei/v1";
-const ORIGIN: &str = auth::ORIGIN;
-pub const USER_AGENT: &str =
-    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36";
-const DEFAULT_CLIENT_VERSION: &str = "1.20261006.10.00";
+pub struct Client(&'static core::Client);
 
-struct State {
-    visitor_data: Option<String>,
-    client_version: String,
-    region: Option<String>,
-    session: Option<Session>,
-    /// Google refreshed some cookies since the session was last saved.
-    session_dirty: bool,
+impl Deref for Client {
+    type Target = core::Client;
+
+    fn deref(&self) -> &core::Client {
+        self.0
+    }
 }
 
-pub struct Client {
-    http: reqwest::Client,
-    state: RwLock<State>,
-}
-
-static CLIENT: OnceLock<Arc<Client>> = OnceLock::new();
-
-pub fn client() -> Arc<Client> {
-    CLIENT.get_or_init(|| Arc::new(Client::new())).clone()
-}
-
-/// A shared HTTP client for artwork and other plain downloads.
-pub fn http() -> reqwest::Client {
-    client().http.clone()
+pub fn client() -> &'static Client {
+    static CLIENT: OnceLock<Client> = OnceLock::new();
+    CLIENT.get_or_init(|| Client(core::web_remix()))
 }
 
 impl Client {
-    fn new() -> Self {
-        let http = reqwest::Client::builder()
-            .user_agent(USER_AGENT)
-            .pool_idle_timeout(std::time::Duration::from_secs(60))
-            .pool_max_idle_per_host(4)
-            .connect_timeout(std::time::Duration::from_secs(10))
-            .timeout(std::time::Duration::from_secs(30))
-            .build()
-            .expect("failed to build HTTP client");
-        Self {
-            http,
-            state: RwLock::new(State {
-                visitor_data: None,
-                client_version: DEFAULT_CLIENT_VERSION.to_owned(),
-                region: None,
-                session: None,
-                session_dirty: false,
-            }),
-        }
-    }
-
-    pub fn set_session(&self, session: Option<Session>) {
-        let mut st = self.state.write().unwrap();
-        st.session = session;
-        st.session_dirty = false;
-        // A different identity: let YouTube hand out fresh visitor data.
-        st.visitor_data = None;
-    }
-
-    pub fn session(&self) -> Option<Session> {
-        self.state.read().unwrap().session.clone()
-    }
-
-    pub fn is_signed_in(&self) -> bool {
-        self.state
-            .read()
-            .unwrap()
-            .session
-            .as_ref()
-            .is_some_and(Session::is_signed_in)
-    }
-
-    /// The session, if its cookies changed since the last call (for saving).
-    pub fn take_dirty_session(&self) -> Option<Session> {
-        let mut st = self.state.write().unwrap();
-        if st.session_dirty {
-            st.session_dirty = false;
-            st.session.clone()
-        } else {
-            None
-        }
-    }
-
-    pub fn set_region(&self, region: Option<String>) {
-        self.state.write().unwrap().region = region.filter(|r| !r.is_empty());
-    }
-
-    fn context(&self) -> Value {
-        let st = self.state.read().unwrap();
-        let mut client = json!({
-            "clientName": "WEB_REMIX",
-            "clientVersion": st.client_version,
-            "hl": "en",
-            "userAgent": USER_AGENT,
-            "platform": "DESKTOP",
-            "utcOffsetMinutes": utc_offset_minutes(),
-        });
-        if let Some(gl) = &st.region {
-            client["gl"] = json!(gl);
-        }
-        if let Some(vd) = &st.visitor_data {
-            client["visitorData"] = json!(vd);
-        }
-        json!({
-            "client": client,
-            "user": { "lockedSafetyMode": false },
-        })
-    }
-
-    fn headers(&self) -> HeaderMap {
-        let st = self.state.read().unwrap();
-        let mut h = HeaderMap::new();
-        h.insert(header::ACCEPT_LANGUAGE, HeaderValue::from_static("en-US,en;q=0.9"));
-        h.insert("X-Youtube-Client-Name", HeaderValue::from_static("67"));
-        if let Ok(v) = HeaderValue::from_str(&st.client_version) {
-            h.insert("X-Youtube-Client-Version", v);
-        }
-        h.insert(header::ORIGIN, HeaderValue::from_static(ORIGIN));
-        h.insert(header::REFERER, HeaderValue::from_static("https://music.youtube.com/"));
-        // Continuation tokens only work together with the visitor id that produced them.
-        if let Some(vd) = st.visitor_data.as_deref().and_then(|v| HeaderValue::from_str(v).ok()) {
-            h.insert("X-Goog-Visitor-Id", vd);
-        }
-        if let Some(s) = st.session.as_ref().filter(|s| s.is_signed_in()) {
-            if let Ok(v) = HeaderValue::from_str(&s.cookie_header(auth::HOST)) {
-                h.insert(header::COOKIE, v);
-            }
-            if let Some(a) = s.authorization().and_then(|a| HeaderValue::from_str(&a).ok()) {
-                h.insert(header::AUTHORIZATION, a);
-            }
-            h.insert("X-Goog-AuthUser", HeaderValue::from_static("0"));
-            h.insert("X-Origin", HeaderValue::from_static(ORIGIN));
-            h.insert("X-Youtube-Bootstrap-Logged-In", HeaderValue::from_static("true"));
-        }
-        h
-    }
-
-    /// Keep cookies Google refreshes through `Set-Cookie`.
-    fn absorb_cookies(&self, resp: &reqwest::Response) {
-        let host = resp.url().host_str().unwrap_or(auth::HOST).to_owned();
-        let set: Vec<String> = resp
-            .headers()
-            .get_all(header::SET_COOKIE)
-            .iter()
-            .filter_map(|v| v.to_str().ok().map(str::to_owned))
-            .collect();
-        if set.is_empty() {
-            return;
-        }
-        let mut st = self.state.write().unwrap();
-        if let Some(session) = st.session.as_mut() {
-            let mut changed = false;
-            for c in &set {
-                changed |= session.apply_set_cookie(c, &host);
-            }
-            st.session_dirty |= changed;
-        }
-    }
-
-    pub async fn post(&self, endpoint: &str, mut body: Value) -> Result<Value> {
-        body["context"] = self.context();
-        let url = format!("{BASE}/{endpoint}?prettyPrint=false");
-        let started = std::time::Instant::now();
-        let resp = self
-            .http
-            .post(&url)
-            .headers(self.headers())
-            .json(&body)
-            .send()
-            .await
-            .with_context(|| format!("request to {endpoint} failed"))?;
-        self.absorb_cookies(&resp);
-        let status = resp.status();
-        let bytes = resp
-            .bytes()
-            .await
-            .with_context(|| format!("reading the {endpoint} response failed"))?;
-        let v: Value = serde_json::from_slice(&bytes).with_context(|| format!("invalid response from {endpoint}"))?;
-        drop(bytes);
-        // The parsed document is dropped by the caller right after parsing.
-        crate::memory::trim_soon();
-        if !status.is_success() {
-            let msg = v
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .unwrap_or("unknown error");
-            bail!("YouTube Music returned {status}: {msg}");
-        }
-        log::debug!("{endpoint}: {status} in {:?}", started.elapsed());
-        if let Some(vd) = v.pointer("/responseContext/visitorData").and_then(Value::as_str) {
-            let mut st = self.state.write().unwrap();
-            if st.visitor_data.is_none() {
-                st.visitor_data = Some(vd.to_owned());
-            }
-        }
-        Ok(v)
-    }
-
-    /// Fetch the web client's current version, so requests look current.
-    pub async fn refresh_client_version(&self) -> Result<()> {
-        let body = self
-            .http
-            .get("https://music.youtube.com/sw.js_data")
-            .header(header::ACCEPT_LANGUAGE, "en-US,en;q=0.9")
-            .send()
-            .await?
-            .text()
-            .await?;
-        // The first "1.YYYYMMDD.xx.xx" string is the WEB_REMIX version.
-        if let Some(pos) = body.find("\"1.20") {
-            let rest = &body[pos + 1..];
-            if let Some(end) = rest.find('"') {
-                let ver = &rest[..end];
-                if ver.split('.').count() == 4 {
-                    self.state.write().unwrap().client_version = ver.to_owned();
-                    log::debug!("WEB_REMIX client version {ver}");
-                }
-            }
-        }
-        Ok(())
-    }
-
     // -----------------------------------------------------------------------
     // Browsing
     // -----------------------------------------------------------------------
-
-    async fn browse(&self, browse_id: &str, params: Option<&str>) -> Result<Value> {
-        let mut body = json!({ "browseId": browse_id });
-        if let Some(p) = params {
-            body["params"] = json!(p);
-        }
-        self.post("browse", body).await
-    }
 
     /// A page of shelves: home (with a mood chip's params), explore, moods, charts, ...
     pub async fn browse_page(&self, browse_id: &str, params: Option<&str>) -> Result<BrowsePage> {
@@ -356,12 +142,6 @@ impl Client {
     // Account
     // -----------------------------------------------------------------------
 
-    /// Who is signed in; `None` when YouTube considers the session signed out.
-    pub async fn account_info(&self) -> Result<Option<AccountInfo>> {
-        let v = self.post("account/account_menu", json!({})).await?;
-        Ok(parse::parse_account_menu(&v))
-    }
-
     /// Like, dislike or clear the rating of a song.
     pub async fn rate_song(&self, video_id: &str, rating: LikeStatus) -> Result<()> {
         self.post(rating.endpoint(), json!({ "target": { "videoId": video_id } }))
@@ -396,22 +176,11 @@ impl Client {
             .append_pair("ver", "2")
             .append_pair("c", "WEB_REMIX")
             .append_pair("cpn", &cpn);
-        let resp = self.http.get(url).headers(self.headers()).send().await?;
-        self.absorb_cookies(&resp);
-        if !resp.status().is_success() {
-            bail!("history ping returned {}", resp.status());
-        }
-        Ok(())
+        self.ping(url).await
     }
 
     pub async fn lyrics(&self, browse_id: &str) -> Result<Option<Lyrics>> {
         let v = self.browse(browse_id, None).await?;
         Ok(parse::parse_lyrics(&v))
     }
-}
-
-fn utc_offset_minutes() -> i32 {
-    gtk::glib::DateTime::now_local()
-        .map(|d| (d.utc_offset().as_seconds() / 60) as i32)
-        .unwrap_or(0)
 }

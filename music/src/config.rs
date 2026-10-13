@@ -17,8 +17,3 @@ pub fn config_dir() -> PathBuf {
 pub fn data_dir() -> PathBuf {
     paths::data_dir("sloptube-music")
 }
-
-/// Per-session private directory (tmpfs, 0700) for short-lived secrets like the yt-dlp cookie jar.
-pub fn runtime_dir() -> PathBuf {
-    paths::runtime_dir("sloptube-music")
-}

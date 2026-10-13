@@ -74,7 +74,7 @@ pub async fn import(profile: &FirefoxProfile) -> Result<Vec<Cookie>> {
 
 fn read_cookies(db: &Path) -> Result<Vec<Cookie>> {
     // Work on a copy: Firefox keeps the live database locked.
-    let tmp = crate::config::runtime_dir().join(format!("import-ff-{}", std::process::id()));
+    let tmp = crate::paths::runtime_dir("sloptube").join(format!("import-ff-{}", std::process::id()));
     std::fs::create_dir_all(&tmp)?;
     let copy = tmp.join("cookies.sqlite");
     let result = (|| -> Result<Vec<Cookie>> {

@@ -197,7 +197,7 @@ fn read_cookies(db: &Path, v11_password: Option<&[u8]>) -> Result<Vec<Cookie>> {
 }
 
 fn tempdir() -> Result<PathBuf> {
-    let dir = crate::config::runtime_dir().join(format!("import-{}", std::process::id()));
+    let dir = crate::paths::runtime_dir("sloptube").join(format!("import-{}", std::process::id()));
     std::fs::create_dir_all(&dir)?;
     Ok(dir)
 }

@@ -1,7 +1,5 @@
-mod account;
 mod api;
 mod application;
-mod auth;
 mod config;
 mod css;
 mod diagnose;
@@ -15,7 +13,7 @@ mod selftest;
 mod settings;
 mod ui;
 
-use common::runtime;
+use common::{account, auth, runtime};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 

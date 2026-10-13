@@ -529,8 +529,8 @@ impl Playback {
         if !s.use_account_for_streams {
             return None;
         }
-        let session = api::client().session().filter(|s| s.is_signed_in())?;
-        auth::write_cookie_file(&session).ok()
+        let session = common::session::get().filter(|s| s.is_signed_in())?;
+        auth::write_cookie_file(&session, "video").ok()
     }
 
     fn load_streams(&self, start: Option<f64>, autoplay: bool) {

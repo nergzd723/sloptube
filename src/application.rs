@@ -64,7 +64,14 @@ mod imp {
                 app,
                 move || app.pause_videos()
             ));
-            Account::get().load_stored();
+            // One Google account for SlopTube and Music.
+            let account = Account::get();
+            account.connect_expired(|| {
+                if let Some(w) = ui::main_window() {
+                    w.toast("Your YouTube session expired. Please sign in again.");
+                }
+            });
+            account.load_stored();
             runtime::spawn(async {
                 if let Err(e) = api::client().refresh_client_version().await {
                     log::debug!("could not refresh client version: {e:#}");
