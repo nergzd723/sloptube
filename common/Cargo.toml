@@ -6,6 +6,10 @@ rust-version = "1.96"
 description = "What SlopTube and SlopTube Music share"
 license = "GPL-3.0-or-later"
 
+[features]
+# Google's sign-in page in the sign-in dialog (WebKitGTK 6.0; Linux only)
+webkit = ["dep:webkit"]
+
 [dependencies]
 gtk = { package = "gtk4", version = "0.11", features = ["v4_18"] }
 adw = { package = "libadwaita", version = "0.9", features = ["v1_7"] }
@@ -26,3 +30,6 @@ rusqlite = "0.37"
 aes = "0.8"
 cbc = "0.1"
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+webkit = { package = "webkit6", version = "0.6", optional = true, features = ["v2_46"] }

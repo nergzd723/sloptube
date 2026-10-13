@@ -6,12 +6,6 @@ rust-version = "1.96"
 description = "SlopTube Music: a lightweight YouTube Music client, part of SlopTube (GTK4/libadwaita + GStreamer)"
 license = "GPL-3.0-or-later"
 
-[features]
-default = ["webkit"]
-# The Google sign-in window, run as `sloptube --music-login` so Music's
-# process-wide state never mixes with WebKit's.
-webkit = ["dep:webkit"]
-
 [dependencies]
 common = { package = "sloptube-common", path = "../common" }
 
@@ -29,17 +23,7 @@ rand = "0.9"
 log = "0.4"
 mpris-server = "0.10"
 
-# Google account: session storage, request signing, browser cookie import
-oo7 = { version = "0.6", default-features = false, features = ["tokio", "openssl_crypto"] }
-sha1 = "0.10"
-hex = "0.4"
-rusqlite = "0.37"
-aes = "0.8"
-cbc = "0.1"
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
-
 [target.'cfg(target_os = "linux")'.dependencies]
-webkit = { package = "webkit6", version = "0.6", optional = true, features = ["v2_46"] }
 # Gives the Music window its own Wayland app ID (icon, window rules).
 gdk-wayland = { package = "gdk4-wayland", version = "0.11" }
 

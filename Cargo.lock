@@ -2740,32 +2740,24 @@ checksum = "0c790de23124f9ab44544d7ac05d60440adc586479ce501c1d6d7da3cd8c9cf5"
 name = "sloptube"
 version = "0.1.0"
 dependencies = [
- "aes",
  "anyhow",
- "cbc",
  "env_logger",
  "glib-build-tools",
  "gst-plugin-gtk4",
  "gstreamer",
  "gtk4",
- "hex",
  "image-webp",
  "libadwaita",
  "log",
  "mpris-server",
- "oo7",
- "pbkdf2",
  "rand",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
- "sha1",
  "sloptube-common",
  "sloptube-music",
  "tokio",
  "url",
- "webkit6",
 ]
 
 [[package]]
@@ -2789,35 +2781,28 @@ dependencies = [
  "sha1",
  "tokio",
  "url",
+ "webkit6",
 ]
 
 [[package]]
 name = "sloptube-music"
 version = "0.1.0"
 dependencies = [
- "aes",
  "anyhow",
- "cbc",
  "gdk4-wayland",
  "glib-build-tools",
  "gstreamer",
  "gtk4",
- "hex",
  "libadwaita",
  "log",
  "mpris-server",
- "oo7",
- "pbkdf2",
  "rand",
  "reqwest",
- "rusqlite",
  "serde",
  "serde_json",
- "sha1",
  "sloptube-common",
  "tokio",
  "url",
- "webkit6",
 ]
 
 [[package]]

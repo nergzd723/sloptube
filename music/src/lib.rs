@@ -14,8 +14,6 @@ mod config;
 mod extractor;
 mod image;
 mod library;
-#[cfg(all(feature = "webkit", target_os = "linux"))]
-pub mod login_helper;
 mod mpris;
 mod playback;
 mod player;

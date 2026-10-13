@@ -18,11 +18,6 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 fn main() -> glib::ExitCode {
-    // Music's Google sign-in window runs as its own process.
-    #[cfg(all(feature = "webkit", target_os = "linux"))]
-    if std::env::args().nth(1).as_deref() == Some("--music-login") {
-        return sloptube_music::login_helper::main();
-    }
     env_logger::Builder::from_env(
         env_logger::Env::default().default_filter_or("sloptube=info,sloptube_music=info,sloptube_common=info"),
     )

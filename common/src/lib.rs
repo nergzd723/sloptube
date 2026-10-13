@@ -8,6 +8,7 @@ pub mod account;
 pub mod auth;
 pub mod innertube;
 pub mod links;
+pub mod login;
 pub mod memory;
 pub mod paths;
 pub mod prefs;
