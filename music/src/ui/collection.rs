@@ -245,7 +245,7 @@ impl CollectionView {
         let tint = TintBin::new(&imp.layout, 1.0);
         imp.tint.replace(Some(tint.clone()));
         imp.rows.set_prefix(vec![Row::Widget(tint.upcast())]);
-        imp.rows.set_empty_state("stm-library-symbolic", "No songs", "");
+        imp.rows.set_empty_state("sloptube-library-symbolic", "No songs", "");
         self.set_child(Some(&imp.rows));
         self.set_header_visible(false);
 
@@ -447,7 +447,7 @@ impl CollectionView {
         imp.tracks.replace(tracks.clone());
         let rows = if tracks.is_empty() {
             vec![Row::Status {
-                icon: if list == LocalList::Liked { "stm-thumbs-up-symbolic" } else { "document-open-recent-symbolic" }.into(),
+                icon: if list == LocalList::Liked { "sloptube-thumbs-up-symbolic" } else { "document-open-recent-symbolic" }.into(),
                 title: if list == LocalList::Liked { "No liked songs yet" } else { "Nothing played yet" }.into(),
                 description: if list == LocalList::Liked {
                     "Songs you like show up here."

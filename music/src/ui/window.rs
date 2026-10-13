@@ -27,9 +27,9 @@ use crate::settings;
 pub const WINDOW_CLASS: &str = "stmusic";
 
 const TABS: [(&str, &str, &str); 3] = [
-    ("home", "Home", "stm-home-symbolic"),
-    ("explore", "Explore", "stm-explore-symbolic"),
-    ("library", "Library", "stm-library-symbolic"),
+    ("home", "Home", "sloptube-home-symbolic"),
+    ("explore", "Explore", "sloptube-explore-symbolic"),
+    ("library", "Library", "sloptube-library-symbolic"),
 ];
 
 mod imp {
@@ -178,7 +178,7 @@ impl Window {
                 "home" => {
                     let view = BrowseView::new(BrowseTarget::new("FEmusic_home"), true);
                     view.rows().set_empty_state(
-                        "stm-home-symbolic",
+                        "sloptube-home-symbolic",
                         "Nothing to show",
                         "YouTube Music didn't recommend anything. Try Explore or Search.",
                     );
@@ -411,7 +411,7 @@ impl Window {
             row.set_child(Some(&b));
             imp.sidebar_saved.append(&row);
         };
-        add("local:liked", "Liked songs", "", Some("stm-thumbs-up-symbolic"), &[], false);
+        add("local:liked", "Liked songs", "", Some("sloptube-thumbs-up-symbolic"), &[], false);
         add("local:history", "History", "", Some("document-open-recent-symbolic"), &[], false);
         for c in Library::get().saved().iter().take(40) {
             add(

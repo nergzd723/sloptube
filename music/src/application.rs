@@ -31,6 +31,8 @@ thread_local! {
 }
 
 /// Register Music's resources (stylesheet, icons) under [`RESOURCE_BASE`].
+/// For home, explore, library and likes Music uses SlopTube's icons
+/// (`sloptube-*-symbolic`), which the host registers too.
 pub fn register_resources() {
     gio::resources_register_include!("sloptube-music.gresource").expect("failed to register Music's resources");
 }

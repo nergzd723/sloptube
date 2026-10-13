@@ -300,7 +300,7 @@ impl RowList {
         let imp = self.imp();
         self.set_vexpand(true);
         imp.empty.replace((
-            "stm-library-symbolic".into(),
+            "sloptube-library-symbolic".into(),
             "Nothing here".into(),
             String::new(),
         ));

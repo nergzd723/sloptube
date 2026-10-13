@@ -53,7 +53,7 @@ fn shortcuts() -> gtk::Widget {
     let b = gtk::Box::new(gtk::Orientation::Horizontal, 10);
     b.set_homogeneous(true);
     b.add_css_class("library-shortcuts");
-    b.append(&shortcut("stm-thumbs-up-symbolic", "Liked songs", Nav::Local(LocalList::Liked)));
+    b.append(&shortcut("sloptube-thumbs-up-symbolic", "Liked songs", Nav::Local(LocalList::Liked)));
     b.append(&shortcut("document-open-recent-symbolic", "History", Nav::Local(LocalList::History)));
     b.upcast()
 }
@@ -92,7 +92,7 @@ fn rows() -> Vec<Row> {
     }
     if rows.is_empty() {
         rows.push(Row::Status {
-            icon: "stm-library-symbolic".into(),
+            icon: "sloptube-library-symbolic".into(),
             title: "Your library is empty".into(),
             description: "Like songs and save albums, playlists and artists to find them here. \
                           Everything is kept on this computer."
@@ -160,7 +160,7 @@ fn account_view() -> gtk::Box {
                 .upcast(),
                 id => {
                     let view = BrowseView::new(BrowseTarget::new(id), false);
-                    view.rows().set_empty_state("stm-library-symbolic", "Nothing here yet", "");
+                    view.rows().set_empty_state("sloptube-library-symbolic", "Nothing here yet", "");
                     view.ensure_loaded();
                     view.upcast()
                 }

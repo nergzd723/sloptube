@@ -223,7 +223,7 @@ impl PlayerBar {
         let info = texts(&imp.title, &imp.artist);
         info.set_size_request(220, -1);
         center.append(&info);
-        imp.like.set_icon_name("stm-thumbs-up-symbolic");
+        imp.like.set_icon_name("sloptube-thumbs-up-symbolic");
         imp.like.add_css_class("flat");
         imp.like.add_css_class("circular");
         imp.like.set_valign(gtk::Align::Center);
