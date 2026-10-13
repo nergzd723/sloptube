@@ -394,8 +394,9 @@ SLOPTUBE_FIXTURES=target/fixtures cargo test
 ```
 
 SlopTube Music is the `music/` crate of the Cargo workspace, with its own
-fixtures (`music/tools/fetch-fixtures.py`, `SLOPTUBE_MUSIC_FIXTURES`).
-`cargo test --workspace` runs both crates' tests.
+fixtures (`music/tools/fetch-fixtures.py`, `SLOPTUBE_MUSIC_FIXTURES`); what the
+two apps share lives in `common/`. `cargo test --workspace` runs all three
+crates' tests.
 
 Re-fetch the fixtures when YouTube changes its responses and a parser needs
 fixing.

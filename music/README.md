@@ -227,7 +227,7 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `src/ui/shelf.rs`, `cards.rs`, `art.rs` | Shelves, tiles, rows, artwork and tint widgets. |
 | `src/ui/browse.rs`, `collection.rs`, `artist.rs`, `search.rs`, `library.rs` | Pages. |
 | `src/ui/login.rs` | The sign-in dialog and the account button. |
-| `src/ui/now_playing.rs`, `player_bar.rs`, `sheet.rs`, `queue.rs`, `lyrics.rs` | Now playing, the bars and the sheet between them. |
+| `src/ui/now_playing.rs`, `player_bar.rs`, `queue.rs`, `lyrics.rs` | Now playing and the bars (the sheet between them is `common::sheet`, shared with SlopTube). |
 | `src/ui/window.rs` | The adaptive window. |
 
 ## Development

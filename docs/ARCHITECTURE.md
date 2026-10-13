@@ -54,8 +54,7 @@ A video goes through these steps:
 | `src/application.rs` | `AdwApplication`: startup (CSS, icons, settings, decoder ranks, stored session), the command line and `--music`, actions and accelerators, opening links, About dialog, shortcuts dialog, hosting SlopTube Music. |
 | `src/css.rs` | Limiting a stylesheet to one app's windows. |
 | `src/config.rs` | App ID and well-known directories. |
-| `src/settings.rs` | Preferences as JSON, main-thread only. |
-| `src/runtime.rs` | The tokio runtime and the bridge from GLib futures. |
+| `src/settings.rs` | Preferences as JSON, main-thread only (on `common::prefs::Store`). |
 | `src/api/client.rs` | InnerTube HTTP client: request context, headers, authentication, cookies, endpoints. |
 | `src/api/parse.rs` | Tolerant parsers turning InnerTube JSON into `api::model` types, and their tests. |
 | `src/api/model.rs` | Plain data types: `VideoItem`, `Item`, `FeedPage`, `VideoDetails`, `RichText`, `Comment`, ... |
@@ -78,11 +77,17 @@ A video goes through these steps:
 | `src/ui/explore.rs`, `search.rs`, `channel.rs`, `playlist.rs`, `downloads.rs` | The other pages. |
 | `src/ui/feed.rs`, `card.rs` | The paginated, virtualised feed and its cards. |
 | `src/ui/watch.rs`, `player_view.rs`, `comments.rs` | The watch page, the video surface with its controls, comments. |
-| `src/ui/sheet.rs`, `mini_player.rs` | The draggable watch sheet and the mini player bar. |
+| `src/ui/mini_player.rs` | The mini player bar (the sheet it opens is `common::sheet`). |
 | `src/ui/aspect.rs` | `AspectBin`, a height-for-width container for 16:9 content. |
 | `src/ui/login.rs`, `preferences.rs` | Sign-in dialog and Preferences. |
 | `data/` | Stylesheet, icons, `.desktop` file, compiled into a GResource by `build.rs`. |
 | `tools/fetch-fixtures.py` | Downloads fresh InnerTube responses for the parser tests. |
+| `common/` | What SlopTube and Music share (`sloptube-common`, see below). |
+| `common/src/runtime.rs`, `memory.rs` | The tokio runtime and the bridge from GLib futures; giving freed memory back. |
+| `common/src/paths.rs`, `prefs.rs` | Per-app directories, atomic writes, the settings store. |
+| `common/src/links.rs` | Parsing YouTube and YouTube Music links. |
+| `common/src/touch.rs` | Taps that only stop a gliding list; labels that let touch scroll. |
+| `common/src/sheet.rs` | The draggable player sheet. |
 | `music/` | SlopTube Music, a library crate in the workspace (see [SlopTube Music](#sloptube-music)). |
 
 ## Threads and processes
@@ -91,7 +96,8 @@ A video goes through these steps:
 settings (a `thread_local`) and the image cache live here. Nothing on this
 thread may block on the network or on GStreamer.
 
-**tokio runtime** (`runtime.rs`, two worker threads named `sloptube-io`). HTTP
+**tokio runtime** (`common/src/runtime.rs`, two worker threads named
+`sloptube-io`, shared with Music). HTTP
 (reqwest), Secret Service access (oo7) and the yt-dlp helper's pipes. UI code
 starts a GLib future with `glib::spawn_future_local`, runs the network part with
 `runtime::run(async { ... })`, awaits the tokio `JoinHandle`, and touches widgets
@@ -424,7 +430,8 @@ Cards and their channel avatars act on release, so a touch swipe that starts on
 one still scrolls. A press that lands while a list is still gliding after a
 fling only stops it, as on phones: `track_scrolling` notes whether each press
 on a scrolled window landed while it was moving, and the click handlers check
-`press_stopped_scrolling` (both in `ui/mod.rs`) before opening anything.
+`press_stopped_scrolling` (both in `common::touch`, used by Music too) before
+opening anything.
 
 ### Watch page and player
 
@@ -444,11 +451,13 @@ directly. On top are the auto-hiding controls and a settings popover with
 quality, speed, audio only and *Stats for nerds*. A tap or click is acted on
 only when it is released, so the start of a drag never toggles the controls.
 
-### The watch sheet (`ui/sheet.rs`)
+### The watch sheet (`common/src/sheet.rs`)
 
 `PlayerSheet` makes the watch page draggable into the mini player, like the
-Android app. Its `progress` property runs from 0 (mini player) to 1 (full
-page).
+Android app; Music's Now playing uses the same widget. Its `progress` property
+runs from 0 (mini player) to 1 (full page). Each app gives it a `Hero` (the
+video frame here, the artwork in Music): where it is, the widget to hide while
+moving, the paintable the floating copy shows, and how it fits.
 
 - The `WatchView` always keeps its full size and is only translated down by
   `(1 − progress) × travel`, where `travel` is the mini player thumbnail's
@@ -600,10 +609,12 @@ it.
 
 SlopTube Music (`music/`, with its own [README](../music/README.md) and
 [plan](../music/docs/PLAN.md)) began as a separate program and is now a library
-crate that runs in SlopTube's process. It has its own InnerTube client
-(`WEB_REMIX`), audio-only player, queue, library, account, yt-dlp helper and
-image cache; those started as copies of SlopTube's and have not been merged
-back. SlopTube's `Application` owns the GApplication and calls the functions in
+crate that runs in SlopTube's process. It shares the `common` crate (runtime,
+settings store, link parsing, touch helpers, the player sheet) and some of
+SlopTube's icons. It still has its own InnerTube client (`WEB_REMIX`),
+audio-only player, queue, library, account, yt-dlp helper and image cache;
+those started as copies of SlopTube's and are being moved into `common` one by
+one. SlopTube's `Application` owns the GApplication and calls the functions in
 `music/src/application.rs`:
 
 - **Opening it**: `sloptube --music` / `-m` is a GApplication option, and the
@@ -631,8 +642,7 @@ back. SlopTube's `Application` owns the GApplication and calls the functions in
   scoped to `window.stmusic` like SlopTube's (see [Styling](#styling)), and its
   window sets its own Wayland app ID so the compositor shows Music's icon. Music
   used to cap glibc's malloc arenas; that is process-wide and would also apply to
-  the video player's threads, so it no longer does. Music's tokio runtime
-  (`stmusic-io`, two workers) is separate from SlopTube's.
+  the video player's threads, so it no longer does.
 - **Sign-in**: Music's Google sign-in runs this binary again as `sloptube
   --music-login`, which prints the cookies on stdout.
 

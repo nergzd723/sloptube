@@ -8,7 +8,9 @@ It started from copies of the parts of [SlopTube](../../README.md) that already
 worked (the tokio bridge, the resident yt-dlp helper, the image cache, MPRIS,
 the draggable sheet), and now runs inside SlopTube's process as the `music/`
 crate (`sloptube --music`), with its own audio-only pipeline, queue and
-account. Those copies haven't been merged with SlopTube's yet.
+account. Those copies are being moved into the shared `common` crate; the
+runtime, settings store, link parsing, touch helpers and the player sheet
+already are.
 
 ## Data
 
