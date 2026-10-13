@@ -18,6 +18,7 @@ pub mod paths;
 pub mod player;
 pub mod preferences;
 pub mod prefs;
+pub mod recovery;
 pub mod runtime;
 pub mod search;
 pub mod session;

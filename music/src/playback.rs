@@ -6,6 +6,8 @@ use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::OnceLock;
 
+use common::extractor::NetworkError;
+use common::recovery::Recovery;
 use gtk::glib::subclass::Signal;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
@@ -72,13 +74,6 @@ fn session_path() -> std::path::PathBuf {
     config::data_dir().join("queue.json")
 }
 
-fn looks_expired(msg: &str) -> bool {
-    let m = msg.to_ascii_lowercase();
-    ["403", "410", "forbidden", "not found", "could not read", "timed out", "timeout", "connection", "reset"]
-        .iter()
-        .any(|k| m.contains(k))
-}
-
 mod imp {
     use super::*;
 
@@ -121,7 +116,7 @@ mod imp {
         pub generation: Cell<u64>,
         /// Bumped whenever a new queue starts.
         pub queue_gen: Cell<u64>,
-        pub retries: Cell<u32>,
+        pub recovery: Recovery,
         pub failures: Cell<u32>,
         pub prepared: RefCell<Option<(u64, String)>>,
         pub token: Cell<u64>,
@@ -152,7 +147,7 @@ mod imp {
                 continuation: Default::default(),
                 generation: Default::default(),
                 queue_gen: Default::default(),
-                retries: Default::default(),
+                recovery: Default::default(),
                 failures: Default::default(),
                 prepared: Default::default(),
                 token: Default::default(),
@@ -238,7 +233,12 @@ impl Playback {
         player.connect_error(glib::clone!(
             #[weak(rename_to = pb)]
             self,
-            move |_, msg, _| pb.on_error(&msg)
+            move |_, msg, transient| pb.on_error(&msg, transient)
+        ));
+        imp.recovery.connect_back_online(glib::clone!(
+            #[weak(rename_to = pb)]
+            self,
+            move || pb.on_network_available()
         ));
         player.connect_advanced(glib::clone!(
             #[weak(rename_to = pb)]
@@ -254,6 +254,7 @@ impl Playback {
                     PlayState::Playing => {
                         pb.set_loading(false);
                         imp.failures.set(0);
+                        imp.recovery.reset();
                         if !imp.counted.replace(true)
                             && let Some(t) = pb.current_track() {
                                 Library::get().add_history(&t);
@@ -658,6 +659,7 @@ impl Playback {
         imp.generation.set(imp.generation.get() + 1);
         imp.queue_gen.set(imp.queue_gen.get() + 1);
         imp.player.stop();
+        imp.recovery.cancel();
         imp.prepared.take();
         imp.continuation.take();
         imp.unshuffled.take();
@@ -673,19 +675,27 @@ impl Playback {
     // Transport
     // -----------------------------------------------------------------------
 
-    /// Play/pause; a restored queue starts its stream only now.
+    /// Play/pause; a restored queue starts its stream only now, and after a
+    /// failure the track loads again.
     pub fn toggle(&self) {
         let imp = self.imp();
         match imp.player.state() {
-            PlayState::Idle | PlayState::Error if self.active() && self.current() >= 0 => {
-                if imp.loading.get() {
-                    return;
-                }
-                let start = imp.resume_at.take();
-                self.start_current(true, start);
-            }
+            PlayState::Idle | PlayState::Error if self.active() && self.current() >= 0 => self.resume(),
             _ => imp.player.toggle(),
         }
+    }
+
+    /// Start the current track's stream (not loaded yet, or failed) from where it stopped.
+    fn resume(&self) {
+        let imp = self.imp();
+        if !self.active() || self.current() < 0 || imp.loading.get() {
+            return;
+        }
+        if !matches!(imp.player.state(), PlayState::Idle | PlayState::Error) {
+            return;
+        }
+        let start = imp.resume_at.take();
+        self.start_current(true, start);
     }
 
     pub fn is_playing(&self) -> bool {
@@ -847,6 +857,7 @@ impl Playback {
         imp.counted.set(false);
         imp.prepared.take();
         imp.player.set_next(None);
+        imp.recovery.cancel();
         self.set_loading(true);
         // Don't let the previous song play on while this one resolves.
         if imp.player.state() != PlayState::Idle {
@@ -862,6 +873,9 @@ impl Playback {
             let imp = pb.imp();
             if imp.generation.get() != generation {
                 return;
+            }
+            if let Err(e) = &res {
+                log::warn!("stream extraction for {} failed: {e:#}", track.video_id);
             }
             let quality = settings::get().quality;
             match res.as_ref().map(|info| extractor::select(info, quality)) {
@@ -880,6 +894,7 @@ impl Playback {
                     pb.maybe_extend();
                 }
                 Ok(None) => pb.failed(&track, "no playable audio stream", autoplay),
+                Err(e) if autoplay && e.downcast_ref::<NetworkError>().is_some() => pb.wait_for_network(start),
                 Err(e) => pb.failed(&track, &format!("{e}"), autoplay),
             }
         });
@@ -905,19 +920,46 @@ impl Playback {
         }
     }
 
-    fn on_error(&self, msg: &str) {
+    fn on_error(&self, msg: &str, transient: bool) {
         let imp = self.imp();
         let Some(track) = self.current_track() else { return };
-        if looks_expired(msg) && imp.retries.get() < 2 {
-            imp.retries.set(imp.retries.get() + 1);
+        let pos = imp.player.position();
+        let resume = (pos > 1.0).then_some(pos);
+        if transient && imp.recovery.retry_now() {
             log::warn!("retrying {} after: {msg}", track.video_id);
             extractor().invalidate(&track.video_id);
-            let pos = imp.player.position();
-            self.start_current(true, (pos > 1.0).then_some(pos));
+            self.start_current(true, resume);
             return;
         }
-        imp.retries.set(0);
+        imp.recovery.reset();
+        // Offline, every track would fail: wait instead of skipping through them.
+        if transient && !Recovery::online() {
+            self.wait_for_network(resume);
+            return;
+        }
         self.failed(&track, msg, true);
+    }
+
+    /// Offline, or YouTube out of reach: keep the track and play on, from
+    /// where it stopped, once the network is back.
+    fn wait_for_network(&self, resume: Option<f64>) {
+        let imp = self.imp();
+        log::info!("waiting for the network");
+        self.set_loading(false);
+        imp.resume_at.set(resume);
+        self.message(if Recovery::online() {
+            "Can't reach YouTube. Playback resumes when it's back."
+        } else {
+            "No internet connection. Playback resumes when you're back online."
+        });
+        imp.recovery.wait_for_network();
+    }
+
+    fn on_network_available(&self) {
+        if let Some(t) = self.current_track() {
+            log::info!("network is back, loading {} again", t.video_id);
+        }
+        self.resume();
     }
 
     /// Resolve the next track's stream now, so skipping is instant and the
@@ -994,7 +1036,7 @@ impl Playback {
             return;
         };
         imp.generation.set(imp.generation.get() + 1);
-        imp.retries.set(0);
+        imp.recovery.reset();
         imp.counted.set(false);
         if index as i32 != self.current() {
             self.set_current(index as i32);

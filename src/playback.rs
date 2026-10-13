@@ -5,8 +5,9 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::Instant;
 
+use common::recovery::Recovery;
 use gtk::glib::subclass::Signal;
-use gtk::{gio, glib};
+use gtk::glib;
 use gtk::prelude::*;
 use gtk::subclass::prelude::*;
 
@@ -124,10 +125,7 @@ mod imp {
         pub support: RefCell<Option<DecoderSupport>>,
         pub tracking: RefCell<Option<Tracking>>,
         pub last_saved: Cell<f64>,
-        pub retries: Cell<u32>,
-        /// The shown error looks network-related: load again once the network is back.
-        pub retry_when_online: Cell<bool>,
-        pub reconnect_probe: RefCell<Option<glib::SourceId>>,
+        pub recovery: Recovery,
         pub played: RefCell<Vec<String>>,
         pub local_file: RefCell<Option<String>>,
     }
@@ -155,9 +153,7 @@ mod imp {
                 support: Default::default(),
                 tracking: Default::default(),
                 last_saved: Default::default(),
-                retries: Default::default(),
-                retry_when_online: Default::default(),
-                reconnect_probe: Default::default(),
+                recovery: Default::default(),
                 played: Default::default(),
                 local_file: Default::default(),
             }
@@ -201,14 +197,10 @@ mod imp {
                 obj,
                 move |_, msg, transient| obj.on_error(msg, transient)
             ));
-            gio::NetworkMonitor::default().connect_network_changed(glib::clone!(
+            self.recovery.connect_back_online(glib::clone!(
                 #[weak]
                 obj,
-                move |_, available| {
-                    if available {
-                        obj.on_network_available();
-                    }
-                }
+                move || obj.on_network_available()
             ));
             self.player.connect_position_notify(glib::clone!(
                 #[weak]
@@ -223,7 +215,7 @@ mod imp {
                         obj.flush_progress(p.state() == PlayState::Ended);
                     }
                     if p.state() == PlayState::Playing {
-                        obj.imp().retries.set(0);
+                        obj.imp().recovery.reset();
                     }
                 }
             ));
@@ -319,7 +311,7 @@ impl Playback {
 
     fn set_error(&self, e: &str) {
         if e.is_empty() {
-            self.imp().retry_when_online.set(false);
+            self.imp().recovery.cancel();
         }
         self.imp().error.replace(e.to_owned());
         self.notify_error();
@@ -328,59 +320,17 @@ impl Playback {
     /// Show a failure. `network` marks failures that loading again can fix once
     /// the network is back.
     fn fail(&self, msg: &str, network: bool) {
-        let offline = network && !gio::NetworkMonitor::default().is_network_available();
+        let offline = network && !Recovery::online();
         self.set_error(if offline {
             "No internet connection. Playback resumes when you're back online."
         } else {
             msg
         });
-        self.imp().retry_when_online.set(network);
         if network {
-            self.probe_connection();
+            self.imp().recovery.wait_for_network();
+        } else {
+            self.imp().recovery.cancel();
         }
-    }
-
-    /// While waiting for the network, try reaching YouTube every few seconds:
-    /// not every reconnection comes with a network-changed signal (e.g. the
-    /// Wi-Fi stays associated while the internet behind it drops).
-    fn probe_connection(&self) {
-        let imp = self.imp();
-        if imp.reconnect_probe.borrow().is_some() {
-            return;
-        }
-        let id = glib::timeout_add_seconds_local(
-            10,
-            glib::clone!(
-                #[weak(rename_to = this)]
-                self,
-                #[upgrade_or]
-                glib::ControlFlow::Break,
-                move || {
-                    if !this.imp().retry_when_online.get() || !this.failed() {
-                        this.imp().reconnect_probe.take();
-                        return glib::ControlFlow::Break;
-                    }
-                    let client = gio::SocketClient::new();
-                    client.set_timeout(5);
-                    client.connect_to_host_async(
-                        "www.youtube.com",
-                        443,
-                        None::<&gio::Cancellable>,
-                        glib::clone!(
-                            #[weak]
-                            this,
-                            move |res| {
-                                if res.is_ok() {
-                                    this.on_network_available();
-                                }
-                            }
-                        ),
-                    );
-                    glib::ControlFlow::Continue
-                }
-            ),
-        );
-        imp.reconnect_probe.replace(Some(id));
     }
 
     /// Showing an error instead of playing.
@@ -407,7 +357,7 @@ impl Playback {
         imp.selection.replace(None);
         imp.quality.set(None);
         imp.tracking.replace(None);
-        imp.retries.set(0);
+        imp.recovery.reset();
         imp.local_file.replace(None);
         imp.offline.set(false);
         self.notify_offline();
@@ -831,9 +781,7 @@ impl Playback {
         // Expired URLs, flaky CDN responses (e.g. a server ignoring range
         // requests) and dropped connections usually go away with fresh URLs
         // from a new extraction. Offline, wait for the network instead.
-        let online = gio::NetworkMonitor::default().is_network_available();
-        if network && online && imp.retries.get() < 2 {
-            imp.retries.set(imp.retries.get() + 1);
+        if network && imp.recovery.retry_now() {
             log::info!("stream failed ({first_line}), extracting again");
             self.retry();
             return;
@@ -841,11 +789,11 @@ impl Playback {
         self.fail(&first_line, network);
     }
 
+    /// The network is back after a failure that waited for it.
     fn on_network_available(&self) {
         let imp = self.imp();
-        if imp.retry_when_online.get() && self.failed() && imp.active.get() {
+        if self.failed() && imp.active.get() {
             log::info!("network is back, loading {} again", imp.video_id.borrow());
-            imp.retries.set(0);
             self.retry();
         }
     }
