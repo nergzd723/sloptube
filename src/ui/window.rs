@@ -4,6 +4,7 @@ use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::sheet::{self, Hero, PlayerSheet};
 use gtk::{gdk, gio, glib};
 
 use super::card::CardStyle;
@@ -12,7 +13,6 @@ use super::feed::FeedView;
 use super::mini_player::MiniPlayer;
 use super::playlist::PlaylistPage;
 use super::search::SearchPage;
-use super::sheet::{self, PlayerSheet};
 use super::watch::WatchView;
 use super::{Nav, pages};
 use crate::account::Account;
@@ -320,7 +320,32 @@ impl Window {
 
         // Watch sheet: drag the video down into the mini player and back up.
         let watch = WatchView::new(&imp.playback);
-        let sheet = PlayerSheet::new(&watch);
+        let sheet = PlayerSheet::new(
+            &watch,
+            Hero {
+                rect: Box::new(glib::clone!(
+                    #[weak]
+                    watch,
+                    #[upgrade_or_default]
+                    move || watch.player_frame()?.compute_bounds(&watch)
+                )),
+                widget: Box::new(glib::clone!(
+                    #[weak]
+                    watch,
+                    #[upgrade_or_default]
+                    move || watch.player_frame().map(|f| f.upcast())
+                )),
+                paintable: Box::new(glib::clone!(
+                    #[weak]
+                    watch,
+                    #[upgrade_or_default]
+                    move || watch.player_view().visual_paintable()
+                )),
+                fit: gtk::ContentFit::Contain,
+                css_class: "floating-video",
+                aspect: 16.0 / 9.0,
+            },
+        );
         sheet.set_halign(gtk::Align::Fill);
         sheet.set_valign(gtk::Align::Fill);
         let mini_weak = mini.downgrade();
@@ -341,20 +366,21 @@ impl Window {
         let pv = watch.player_view();
         sheet.attach_collapse_drag(
             &pv,
-            glib::clone!(
+            Some(Box::new(glib::clone!(
                 #[weak]
                 pv,
                 move || pv.cancel_pending_click()
-            ),
-            glib::clone!(
+            ))),
+            Some(Box::new(glib::clone!(
                 #[weak(rename_to = win)]
                 self,
                 move || win.toggle_fullscreen()
-            ),
+            ))),
         );
         if let Some(row) = mini.row() {
             let pb = imp.playback.clone();
-            sheet.attach_expand_drag(&row, move || pb.stop());
+            // A sideways swipe either way stops playback.
+            sheet.attach_expand_drag(&row, move |_| pb.stop());
         }
         imp.watch.replace(Some(watch.clone()));
         imp.sheet.replace(Some(sheet.clone()));

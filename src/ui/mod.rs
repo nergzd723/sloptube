@@ -14,7 +14,6 @@ pub mod player_view;
 pub mod playlist;
 pub mod preferences;
 pub mod search;
-pub mod sheet;
 pub mod watch;
 pub mod window;
 

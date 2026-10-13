@@ -5,6 +5,7 @@ use std::cell::{Cell, RefCell};
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::sheet::{self, Hero, PlayerSheet};
 use gtk::{gdk, gio, glib};
 
 use super::art::ArtView;
@@ -14,7 +15,6 @@ use super::collection::collection_page;
 use super::now_playing::NowPlayingView;
 use super::player_bar::PlayerBar;
 use super::search::{SearchView, search_page};
-use super::sheet::{self, PlayerSheet};
 use super::{LocalList, Nav, page};
 use crate::api::{BrowseTarget, CardKind, PageKind};
 use crate::config;
@@ -279,7 +279,32 @@ impl Window {
         imp.bar_revealer.set_transition_type(gtk::RevealerTransitionType::SlideUp);
         imp.bar_revealer.set_reveal_child(false);
         let now_playing = NowPlayingView::new();
-        let sheet = PlayerSheet::new(&now_playing);
+        let sheet = PlayerSheet::new(
+            &now_playing,
+            Hero {
+                rect: Box::new(glib::clone!(
+                    #[weak]
+                    now_playing,
+                    #[upgrade_or_default]
+                    move || now_playing.art_rect_in(&now_playing)
+                )),
+                widget: Box::new(glib::clone!(
+                    #[weak]
+                    now_playing,
+                    #[upgrade_or_default]
+                    move || Some(now_playing.art().upcast())
+                )),
+                paintable: Box::new(glib::clone!(
+                    #[weak]
+                    now_playing,
+                    #[upgrade_or_default]
+                    move || now_playing.art().texture().map(|t| t.upcast())
+                )),
+                fit: gtk::ContentFit::Cover,
+                css_class: "floating-art",
+                aspect: 1.0,
+            },
+        );
         sheet.set_halign(gtk::Align::Fill);
         sheet.set_valign(gtk::Align::Fill);
         let bar_weak = bar.downgrade();
@@ -303,7 +328,8 @@ impl Window {
             self,
             move |_, open| win.on_sheet_settled(open)
         ));
-        sheet.attach_collapse_drag(&now_playing.drag_area());
+        // Upward drags are left to the Up next / Lyrics sheet; downward ones close Now playing.
+        sheet.attach_collapse_drag(&now_playing.drag_area(), None, None);
         sheet.attach_expand_drag(&bar.mini_row(), |dir| {
             let pb = Playback::get();
             if dir < 0 {

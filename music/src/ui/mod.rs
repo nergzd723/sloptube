@@ -16,7 +16,6 @@ pub mod preferences;
 pub mod queue;
 pub mod rows;
 pub mod search;
-pub mod sheet;
 pub mod shelf;
 pub mod window;
 

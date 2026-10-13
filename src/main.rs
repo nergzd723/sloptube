@@ -26,7 +26,7 @@ fn main() -> glib::ExitCode {
         return sloptube_music::login_helper::main();
     }
     env_logger::Builder::from_env(
-        env_logger::Env::default().default_filter_or("sloptube=info,sloptube_music=info"),
+        env_logger::Env::default().default_filter_or("sloptube=info,sloptube_music=info,sloptube_common=info"),
     )
     .init();
 
