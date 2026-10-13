@@ -2766,6 +2766,7 @@ dependencies = [
  "aes",
  "anyhow",
  "cbc",
+ "gstreamer",
  "gtk4",
  "hex",
  "image-webp",

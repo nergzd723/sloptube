@@ -17,7 +17,7 @@ use crate::api::{self, Track, WatchTarget};
 use crate::config;
 use crate::extractor::{self, extractor};
 use crate::library::Library;
-use crate::player::{LoadRequest, NextStream, PlayState, Player};
+use crate::player::{self, LoadRequest, NextStream, PlayState, Player, Source};
 use crate::runtime;
 use crate::settings::{self, Repeat};
 
@@ -135,7 +135,7 @@ mod imp {
     impl Default for Playback {
         fn default() -> Self {
             Self {
-                player: Player::default(),
+                player: Player::new(player::CONFIG),
                 queue: gio::ListStore::new::<glib::BoxedAnyObject>(),
                 active: Default::default(),
                 current: Cell::new(-1),
@@ -238,7 +238,7 @@ impl Playback {
         player.connect_error(glib::clone!(
             #[weak(rename_to = pb)]
             self,
-            move |_, msg| pb.on_error(&msg)
+            move |_, msg, _| pb.on_error(&msg)
         ));
         player.connect_advanced(glib::clone!(
             #[weak(rename_to = pb)]
@@ -699,7 +699,7 @@ impl Playback {
             imp.resume_at.set(Some(pos));
             return;
         }
-        imp.player.seek(pos);
+        imp.player.seek(pos, true);
     }
 
     fn next_index(&self, auto: bool) -> Option<u32> {
@@ -868,7 +868,7 @@ impl Playback {
                 Ok(Some(f)) => {
                     log::info!("playing {} ({})", track.video_id, f.describe());
                     imp.player.load(LoadRequest {
-                        uri: f.url.clone(),
+                        source: Source::Single { uri: f.url.clone() },
                         headers: f.headers(),
                         start,
                         autoplay,

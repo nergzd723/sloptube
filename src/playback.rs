@@ -90,7 +90,7 @@ fn save_position(id: &str, pos: f64, duration: f64) {
 mod imp {
     use super::*;
 
-    #[derive(glib::Properties, Default)]
+    #[derive(glib::Properties)]
     #[properties(wrapper_type = super::Playback)]
     pub struct Playback {
         pub player: Player,
@@ -130,6 +130,38 @@ mod imp {
         pub reconnect_probe: RefCell<Option<glib::SourceId>>,
         pub played: RefCell<Vec<String>>,
         pub local_file: RefCell<Option<String>>,
+    }
+
+    impl Default for Playback {
+        fn default() -> Self {
+            Self {
+                player: Player::new(player::CONFIG),
+                video_id: Default::default(),
+                title: Default::default(),
+                channel_name: Default::default(),
+                thumbnail: Default::default(),
+                active: Default::default(),
+                loading_streams: Default::default(),
+                error: Default::default(),
+                audio_only: Default::default(),
+                offline: Default::default(),
+                item: Default::default(),
+                details: Default::default(),
+                info: Default::default(),
+                selection: Default::default(),
+                quality: Default::default(),
+                queue: Default::default(),
+                generation: Default::default(),
+                support: Default::default(),
+                tracking: Default::default(),
+                last_saved: Default::default(),
+                retries: Default::default(),
+                retry_when_online: Default::default(),
+                reconnect_probe: Default::default(),
+                played: Default::default(),
+                local_file: Default::default(),
+            }
+        }
     }
 
     #[glib::object_subclass]

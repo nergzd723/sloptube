@@ -15,6 +15,7 @@ pub mod lists;
 pub mod login;
 pub mod memory;
 pub mod paths;
+pub mod player;
 pub mod preferences;
 pub mod prefs;
 pub mod runtime;

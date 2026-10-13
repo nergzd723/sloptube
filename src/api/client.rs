@@ -6,7 +6,7 @@ use std::sync::OnceLock;
 
 use anyhow::{Result, anyhow, bail};
 use common::innertube::client as core;
-pub use common::innertube::client::{USER_AGENT, http};
+pub use common::innertube::client::http;
 use serde_json::{Value, json};
 
 use super::model::*;
