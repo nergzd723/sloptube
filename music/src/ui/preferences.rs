@@ -5,22 +5,9 @@ use gtk::glib;
 
 use crate::account::{self, Account};
 use crate::api;
-use crate::config;
 use crate::image;
 use crate::library::Library;
-use crate::settings::{self, AudioQuality, ColorScheme};
-
-pub fn apply_color_scheme(scheme: ColorScheme) {
-    let sm = adw::StyleManager::default();
-    sm.set_color_scheme(match scheme {
-        ColorScheme::Dark => adw::ColorScheme::ForceDark,
-        ColorScheme::Light => adw::ColorScheme::ForceLight,
-        ColorScheme::System if config::GTK_THEME_DARK.load(std::sync::atomic::Ordering::Relaxed) => {
-            adw::ColorScheme::PreferDark
-        }
-        ColorScheme::System => adw::ColorScheme::Default,
-    });
-}
+use crate::settings::{self, AudioQuality};
 
 fn switch_row(title: &str, subtitle: Option<&str>, active: bool, f: impl Fn(bool) + 'static) -> adw::SwitchRow {
     let row = adw::SwitchRow::builder().title(title).active(active).build();
@@ -103,21 +90,6 @@ pub fn present(parent: &impl IsA<gtk::Widget>) {
         |v| settings::update(|s| s.send_history = v),
     ));
     page.add(&account_group);
-
-    let appearance = adw::PreferencesGroup::builder().title("Appearance").build();
-    let schemes = [ColorScheme::Dark, ColorScheme::System, ColorScheme::Light];
-    let style = adw::ComboRow::builder()
-        .title("Style")
-        .model(&gtk::StringList::new(&["Dark", "Follow system", "Light"]))
-        .selected(schemes.iter().position(|c| *c == s.color_scheme).unwrap_or(0) as u32)
-        .build();
-    style.connect_selected_notify(move |r| {
-        let scheme = schemes[(r.selected() as usize).min(2)];
-        settings::update(|s| s.color_scheme = scheme);
-        apply_color_scheme(scheme);
-    });
-    appearance.add(&style);
-    page.add(&appearance);
 
     let playback = adw::PreferencesGroup::builder().title("Playback").build();
     let quality = adw::ComboRow::builder()

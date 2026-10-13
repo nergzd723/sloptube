@@ -9,9 +9,6 @@ pub const APP_NAME: &str = "SlopTube Music";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const RESOURCE_BASE: &str = "/io/github/nergzd/SlopTubeMusic";
 
-/// Set when the environment asked for a dark Adwaita via `GTK_THEME=Adwaita:dark`.
-pub static GTK_THEME_DARK: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-
 fn ensure(dir: PathBuf) -> PathBuf {
     let _ = std::fs::create_dir_all(&dir);
     dir

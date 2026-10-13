@@ -2,7 +2,7 @@
 Name=SlopTube Music
 GenericName=Music Player
 Comment=Listen to YouTube Music
-Exec=sloptube-music %U
+Exec=sloptube --music %U
 Icon=io.github.nergzd.SlopTubeMusic
 Terminal=false
 Type=Application

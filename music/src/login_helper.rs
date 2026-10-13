@@ -1,6 +1,6 @@
-//! `sloptube-music-login`: Google sign-in for SlopTube Music.
+//! `sloptube --music-login`: Google sign-in for SlopTube Music.
 //!
-//! A separate process, so the player itself never loads WebKit: SlopTube
+//! A separate process, so the app never holds a WebKit session: SlopTube
 //! Music starts it when you choose "Sign in with Google", and it shows
 //! Google's sign-in page in a throwaway in-memory browser session. Once the
 //! page lands back on YouTube with a signed-in session, it prints the YouTube
@@ -118,7 +118,8 @@ fn build(app: &adw::Application) {
     window.present();
 }
 
-fn main() -> glib::ExitCode {
+/// Run the sign-in window (the whole process; call before anything else starts).
+pub fn main() -> glib::ExitCode {
     // libadwaita ignores its stylesheet when GTK_THEME is set.
     if let Ok(theme) = std::env::var("GTK_THEME")
         && (theme == "Adwaita" || theme.starts_with("Adwaita:")) {

@@ -3,20 +3,12 @@
 //! InnerTube responses are large JSON documents (1–5 MB) that are parsed into
 //! the small model types and dropped right away. glibc keeps such freed memory
 //! in its arenas, one per thread that ever allocated, so without help the
-//! process grows by a few tens of megabytes after browsing a bit. We cap the
-//! number of arenas at startup and hand freed memory back to the system a
-//! moment after bursts of work.
+//! process grows by a few tens of megabytes after browsing a bit. Freed memory
+//! is handed back to the system a moment after bursts of work. (The arena count
+//! isn't capped: that is process-wide and would also slow down the threads of
+//! SlopTube's video player.)
 
 use std::sync::atomic::{AtomicBool, Ordering};
-
-/// Limit malloc arenas (call before any threads start).
-pub fn init() {
-    #[cfg(target_env = "gnu")]
-    unsafe {
-        // M_ARENA_MAX = -8
-        libc::mallopt(-8, 2);
-    }
-}
 
 static SCHEDULED: AtomicBool = AtomicBool::new(false);
 

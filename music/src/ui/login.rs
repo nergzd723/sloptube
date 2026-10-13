@@ -1,5 +1,5 @@
-//! Signing in: Google's sign-in page in the separate `sloptube-music-login`
-//! process, or importing the session of a Firefox or Chromium profile.
+//! Signing in: Google's sign-in page in a separate process (`sloptube
+//! --music-login`), or importing the session of a Firefox or Chromium profile.
 
 use std::path::PathBuf;
 
@@ -11,16 +11,14 @@ use crate::auth::{Cookie, Session, chromium, firefox};
 use crate::image;
 use crate::runtime;
 
-/// The sign-in helper: next to this executable, or on `PATH`.
+/// The sign-in window is this program again, run with `--music-login`
+/// (built only with WebKitGTK).
 fn login_helper() -> Option<PathBuf> {
-    if let Some(p) = std::env::var_os("SLOPTUBE_MUSIC_LOGIN") {
-        return Some(p.into());
+    if cfg!(all(feature = "webkit", target_os = "linux")) {
+        std::env::current_exe().ok()
+    } else {
+        None
     }
-    let sibling = std::env::current_exe()
-        .ok()
-        .map(|e| e.with_file_name("sloptube-music-login"))
-        .filter(|p| p.is_file());
-    sibling.or_else(|| glib::find_program_in_path("sloptube-music-login"))
 }
 
 fn alert(parent: &impl IsA<gtk::Widget>, title: &str, body: &str) {
@@ -46,7 +44,7 @@ async fn finish(dialog: &adw::Dialog, session: Session) {
 
 /// Run the sign-in window and wait for its cookies.
 async fn run_helper(helper: PathBuf, process: &std::cell::RefCell<Option<gio::Subprocess>>) -> anyhow::Result<Option<Vec<Cookie>>> {
-    let mut argv: Vec<std::ffi::OsString> = vec![helper.into()];
+    let mut argv: Vec<std::ffi::OsString> = vec![helper.into(), "--music-login".into()];
     if adw::StyleManager::default().is_dark() {
         argv.push("--dark".into());
     }

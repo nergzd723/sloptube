@@ -8,14 +8,6 @@ use serde::{Deserialize, Serialize};
 use crate::config;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
-pub enum ColorScheme {
-    System,
-    Light,
-    #[default]
-    Dark,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub enum AudioQuality {
     /// ~50 kbps Opus.
     Low,
@@ -58,7 +50,6 @@ pub enum Repeat {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Settings {
-    pub color_scheme: ColorScheme,
     pub quality: AudioQuality,
     pub volume: f64,
     pub muted: bool,
@@ -83,7 +74,6 @@ pub struct Settings {
 impl Default for Settings {
     fn default() -> Self {
         Self {
-            color_scheme: ColorScheme::Dark,
             quality: AudioQuality::High,
             volume: 1.0,
             muted: false,

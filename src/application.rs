@@ -1,4 +1,9 @@
 //! The GtkApplication: startup, actions, CSS, window management.
+//!
+//! SlopTube Music runs in the same application: `sloptube --music`, the
+//! "Open SlopTube Music" menu item and music.youtube.com links open its
+//! window. App-wide actions (preferences, about, shortcuts) act for the app
+//! whose window is active.
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
@@ -18,7 +23,6 @@ mod imp {
 
     #[derive(Default)]
     pub struct Application {
-        pub mpris_started: std::cell::Cell<bool>,
         pub diagnose_started: std::cell::Cell<bool>,
     }
 
@@ -39,8 +43,15 @@ mod imp {
             gtk::Window::set_default_icon_name(config::APP_ID);
 
             let display = gdk::Display::default().expect("no display");
-            gtk::IconTheme::for_display(&display).add_resource_path("/io/github/nergzd/SlopTube/icons");
+            let icons = gtk::IconTheme::for_display(&display);
+            icons.add_resource_path("/io/github/nergzd/SlopTube/icons");
+            icons.add_resource_path(&format!("{}/icons", sloptube_music::RESOURCE_BASE));
             add_window_stylesheet(&display, "/io/github/nergzd/SlopTube/style.css", "sloptube");
+            add_window_stylesheet(
+                &display,
+                &format!("{}/style.css", sloptube_music::RESOURCE_BASE),
+                sloptube_music::WINDOW_CLASS,
+            );
 
             let s = settings::get();
             ui::preferences::apply_color_scheme(s.color_scheme);
@@ -71,13 +82,42 @@ mod imp {
                     win.playback().player().shutdown(std::time::Duration::from_millis(1500));
                 }
             }
+            sloptube_music::shutdown();
             self.parent_shutdown();
         }
 
-        fn open(&self, files: &[gio::File], _hint: &str) {
-            let win = self.obj().main_window();
+        fn command_line(&self, cmd: &gio::ApplicationCommandLine) -> glib::ExitCode {
+            let app = self.obj();
+            let music = cmd.options_dict().contains("music");
+            let files: Vec<gio::File> = cmd
+                .arguments()
+                .iter()
+                .skip(1)
+                .filter(|a| !a.to_string_lossy().starts_with("--"))
+                .map(|a| cmd.create_file_for_arg(a))
+                .collect();
+            match (files.is_empty(), music) {
+                (true, true) => sloptube_music::present(app.upcast_ref()),
+                (true, false) => app.activate(),
+                (false, _) => self.open(&files, if music { "music" } else { "" }),
+            }
+            glib::ExitCode::SUCCESS
+        }
+
+        fn open(&self, files: &[gio::File], hint: &str) {
+            let app = self.obj();
+            // `--music` opens every link in Music, otherwise only music.youtube.com links.
+            let (music, videos): (Vec<gio::File>, Vec<gio::File>) =
+                files.iter().cloned().partition(|f| hint == "music" || is_music_link(&f.uri()));
+            if !music.is_empty() {
+                sloptube_music::open(app.upcast_ref(), &music);
+            }
+            if videos.is_empty() {
+                return;
+            }
+            let win = app.main_window();
             win.present();
-            for f in files {
+            for f in &videos {
                 let uri = f.uri().to_string();
                 match ui::nav_for_youtube_url(&uri) {
                     Some(nav) => win.navigate(nav),
@@ -110,11 +150,23 @@ glib::wrapper! {
 
 impl Application {
     pub fn new() -> Self {
-        glib::Object::builder()
+        let app: Self = glib::Object::builder()
             .property("application-id", config::APP_ID)
-            .property("flags", gio::ApplicationFlags::HANDLES_OPEN)
+            .property(
+                "flags",
+                gio::ApplicationFlags::HANDLES_OPEN | gio::ApplicationFlags::HANDLES_COMMAND_LINE,
+            )
             .property("resource-base-path", "/io/github/nergzd/SlopTube")
-            .build()
+            .build();
+        app.add_main_option(
+            "music",
+            glib::Char::from(b'm'),
+            glib::OptionFlags::NONE,
+            glib::OptionArg::None,
+            "Open SlopTube Music (links too)",
+            None,
+        );
+        app
     }
 
     pub fn main_window(&self) -> Window {
@@ -122,72 +174,84 @@ impl Application {
             return w;
         }
         let win = Window::new(self.upcast_ref());
-        if !self.imp().mpris_started.replace(true) {
-            let pb = win.playback();
-            let raise = {
-                let app = self.downgrade();
-                move || {
-                    if let Some(app) = app.upgrade() {
-                        app.main_window().present();
-                    }
+        // Each SlopTube window registers its own MPRIS player, which goes away
+        // with the window (Music can keep the application running after that).
+        let pb = win.playback();
+        let raise = {
+            let app = self.downgrade();
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.main_window().present();
                 }
-            };
-            let quit = {
-                let app = self.downgrade();
-                move || {
-                    if let Some(app) = app.upgrade() {
-                        app.quit();
-                    }
+            }
+        };
+        // Music may still be open, so "Quit" only closes SlopTube's windows.
+        let quit = {
+            let app = self.downgrade();
+            move || {
+                if let Some(app) = app.upgrade() {
+                    app.close_videos();
                 }
-            };
-            glib::spawn_future_local(async move {
-                if let Err(e) = crate::mpris::setup(pb, raise, quit).await {
-                    log::warn!("MPRIS unavailable: {e:#}");
-                }
-            });
-        }
+            }
+        };
+        glib::spawn_future_local(async move {
+            if let Err(e) = crate::mpris::setup(pb, raise, quit).await {
+                log::warn!("MPRIS unavailable: {e:#}");
+            }
+        });
         win
     }
 
-    fn setup_actions(&self) {
-        let quit = gio::SimpleAction::new("quit", None);
-        quit.connect_activate(glib::clone!(
-            #[weak(rename_to = app)]
-            self,
-            move |_, _| {
-                for w in app.windows() {
-                    if let Ok(win) = w.downcast::<Window>() {
-                        win.playback().stop();
-                    }
-                }
-                app.quit();
+    /// The active window, if it's Music's.
+    fn music_window(&self) -> Option<gtk::Window> {
+        self.active_window().filter(sloptube_music::owns)
+    }
+
+    /// Stop the videos and close SlopTube's windows; Music keeps running.
+    fn close_videos(&self) {
+        for w in self.windows() {
+            if let Ok(win) = w.downcast::<Window>() {
+                win.playback().stop();
+                // Not close(): with a dialog open, that only closes the dialog.
+                win.destroy();
             }
-        ));
-        self.add_action(&quit);
+        }
+    }
 
-        let prefs = gio::SimpleAction::new("preferences", None);
-        prefs.connect_activate(glib::clone!(
-            #[weak(rename_to = app)]
-            self,
-            move |_, _| ui::preferences::present(&app.main_window())
-        ));
-        self.add_action(&prefs);
-
-        let about = gio::SimpleAction::new("about", None);
-        about.connect_activate(glib::clone!(
-            #[weak(rename_to = app)]
-            self,
-            move |_, _| app.show_about()
-        ));
-        self.add_action(&about);
-
-        let shortcuts = gio::SimpleAction::new("shortcuts", None);
-        shortcuts.connect_activate(glib::clone!(
-            #[weak(rename_to = app)]
-            self,
-            move |_, _| show_shortcuts(&app.main_window())
-        ));
-        self.add_action(&shortcuts);
+    fn setup_actions(&self) {
+        let action = |name: &str, f: fn(&Application)| {
+            let a = gio::SimpleAction::new(name, None);
+            let app = self.downgrade();
+            a.connect_activate(move |_, _| {
+                if let Some(app) = app.upgrade() {
+                    f(&app);
+                }
+            });
+            self.add_action(&a);
+        };
+        action("quit", |app| {
+            for w in app.windows() {
+                if let Ok(win) = w.downcast::<Window>() {
+                    win.playback().stop();
+                }
+            }
+            sloptube_music::pause();
+            app.quit();
+        });
+        action("preferences", |app| match app.music_window() {
+            Some(w) => sloptube_music::show_preferences(&w),
+            None => ui::preferences::present(&app.main_window()),
+        });
+        action("about", |app| match app.music_window() {
+            Some(w) => sloptube_music::show_about(&w),
+            None => app.show_about(),
+        });
+        action("shortcuts", |app| match app.music_window() {
+            Some(w) => sloptube_music::show_shortcuts(&w),
+            None => show_shortcuts(&app.main_window()),
+        });
+        action("show-music", |app| sloptube_music::present(app.upcast_ref()));
+        action("show-videos", |app| app.main_window().present());
 
         self.set_accels_for_action("app.quit", &["<Control>q"]);
         self.set_accels_for_action("app.preferences", &["<Control>comma"]);
@@ -196,6 +260,8 @@ impl Application {
         self.set_accels_for_action("win.refresh", &["<Control>r", "F5"]);
         self.set_accels_for_action("win.open-link", &["<Control>l"]);
         self.set_accels_for_action("win.toggle-fullscreen", &["F11"]);
+        // Music's window
+        self.set_accels_for_action("win.toggle-player", &["<Control>j"]);
         self.set_accels_for_action("window.close", &["<Control>w"]);
     }
 
@@ -238,6 +304,11 @@ impl Default for Application {
 }
 
 /// Load a stylesheet from the resources for the windows with the CSS class `scope` only.
+/// A music.youtube.com link (opened in Music even without `--music`).
+fn is_music_link(uri: &str) -> bool {
+    url::Url::parse(uri).is_ok_and(|u| u.host_str() == Some("music.youtube.com"))
+}
+
 fn add_window_stylesheet(display: &gdk::Display, resource: &str, scope: &str) {
     let css = match gio::resources_lookup_data(resource, gio::ResourceLookupFlags::NONE) {
         Ok(data) => crate::css::scoped(&String::from_utf8_lossy(&data), scope),

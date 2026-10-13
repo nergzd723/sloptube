@@ -2761,6 +2761,36 @@ dependencies = [
  "serde",
  "serde_json",
  "sha1",
+ "sloptube-music",
+ "tokio",
+ "url",
+ "webkit6",
+]
+
+[[package]]
+name = "sloptube-music"
+version = "0.1.0"
+dependencies = [
+ "aes",
+ "anyhow",
+ "cbc",
+ "gdk4-wayland",
+ "glib-build-tools",
+ "gstreamer",
+ "gtk4",
+ "hex",
+ "libadwaita",
+ "libc",
+ "log",
+ "mpris-server",
+ "oo7",
+ "pbkdf2",
+ "rand",
+ "reqwest",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "sha1",
  "tokio",
  "url",
  "webkit6",

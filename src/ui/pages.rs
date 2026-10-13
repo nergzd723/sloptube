@@ -109,6 +109,7 @@ pub fn account_button() -> gtk::MenuButton {
             menu.append_section(None, &top);
             let mid = gio::Menu::new();
             mid.append(Some("Downloads"), Some("win.show-downloads"));
+            mid.append(Some("Open SlopTube Music"), Some("app.show-music"));
             mid.append(Some("Open YouTube Link…"), Some("win.open-link"));
             menu.append_section(None, &mid);
             let bottom = gio::Menu::new();

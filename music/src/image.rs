@@ -178,6 +178,23 @@ pub fn warm_up_connections() {
     });
 }
 
+fn texture_for(pixbuf: &gdk_pixbuf::Pixbuf) -> gdk::Texture {
+    // Straight (not premultiplied) alpha, like gdk-pixbuf's.
+    let format = if pixbuf.has_alpha() {
+        gdk::MemoryFormat::R8g8b8a8
+    } else {
+        gdk::MemoryFormat::R8g8b8
+    };
+    gdk::MemoryTexture::new(
+        pixbuf.width(),
+        pixbuf.height(),
+        format,
+        &pixbuf.read_pixel_bytes(),
+        pixbuf.rowstride() as usize,
+    )
+    .upcast()
+}
+
 /// Pixbufs are plain pixel buffers; this lets one cross back from the decoder thread.
 struct SendPixbuf(gdk_pixbuf::Pixbuf);
 // SAFETY: the pixbuf is created on the worker and only used on the main thread afterwards.
@@ -204,7 +221,7 @@ pub async fn load(url: &str, width: u32) -> Option<gdk::Texture> {
         let cached = CACHE.with(|c| c.borrow_mut().get_bytes(&url));
         glib::spawn_future_local(async move {
             let res = fetch(url.clone(), width, cached).await;
-            let tex = res.as_ref().map(|(p, _)| gdk::Texture::for_pixbuf(p));
+            let tex = res.as_ref().map(|(p, _)| texture_for(p));
             CACHE.with(|c| {
                 let mut c = c.borrow_mut();
                 if let Some((_, data)) = res {

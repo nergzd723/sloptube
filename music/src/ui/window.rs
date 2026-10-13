@@ -23,6 +23,9 @@ use crate::playback::Playback;
 use crate::player::PlayState;
 use crate::settings;
 
+/// The CSS class of Music's windows; Music's stylesheet only applies inside them.
+pub const WINDOW_CLASS: &str = "stmusic";
+
 const TABS: [(&str, &str, &str); 3] = [
     ("home", "Home", "stm-home-symbolic"),
     ("explore", "Explore", "stm-explore-symbolic"),
@@ -92,7 +95,7 @@ mod imp {
                 if let Some(app) = obj.application() {
                     let n = gio::Notification::new("SlopTube Music is still playing");
                     n.set_body(Some("Use your media keys or open SlopTube Music again to get back."));
-                    app.send_notification(Some("background"), &n);
+                    app.send_notification(Some("music-background"), &n);
                 }
                 return glib::Propagation::Stop;
             }
@@ -121,14 +124,25 @@ impl Window {
                 Some((w.parse().ok()?, h.parse().ok()?))
             })
             .unwrap_or((1180, 780));
-        glib::Object::builder()
+        let win: Self = glib::Object::builder()
             .property("application", app)
             .property("title", config::APP_NAME)
+            .property("icon-name", config::APP_ID)
             .property("default-width", w)
             .property("default-height", h)
             .property("width-request", 360)
             .property("height-request", 480)
-            .build()
+            .build();
+        // GTK gives every window the application's ID (SlopTube's); with its
+        // own, the compositor shows Music's icon and window rules can tell
+        // the two apart.
+        #[cfg(target_os = "linux")]
+        win.connect_realize(|w| {
+            if let Some(toplevel) = w.surface().and_downcast::<gdk_wayland::WaylandToplevel>() {
+                toplevel.set_application_id(config::APP_ID);
+            }
+        });
+        win
     }
 
     pub fn toast(&self, message: &str) {
@@ -155,7 +169,7 @@ impl Window {
 
     fn build(&self) {
         let imp = self.imp();
-        self.add_css_class("stmusic");
+        self.add_css_class(WINDOW_CLASS);
 
         // Tabs, each with its own navigation stack.
         for (name, title, icon) in TABS {
@@ -600,6 +614,7 @@ impl Window {
             });
             controller.add_shortcut(gtk::Shortcut::new(gtk::ShortcutTrigger::parse_string(trigger), Some(action)));
         };
+        add("slash", |w| w.open_search(None));
         add("space|k|AudioPlay|AudioPause", |_| Playback::get().toggle());
         add("<Shift>n|AudioNext|<Control>Right", |_| Playback::get().next());
         add("<Shift>p|AudioPrev|<Control>Left", |_| Playback::get().previous());

@@ -9,6 +9,7 @@ pub fn primary_menu() -> gio::Menu {
     let menu = gio::Menu::new();
     let main = gio::Menu::new();
     main.append(Some("Open Link…"), Some("win.open-link"));
+    main.append(Some("Open SlopTube"), Some("app.show-videos"));
     main.append(Some("Preferences"), Some("app.preferences"));
     main.append(Some("Keyboard Shortcuts"), Some("app.shortcuts"));
     main.append(Some("About SlopTube Music"), Some("app.about"));

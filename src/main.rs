@@ -20,7 +20,15 @@ use gtk::prelude::*;
 use gtk::{gio, glib};
 
 fn main() -> glib::ExitCode {
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("sloptube=info")).init();
+    // Music's Google sign-in window runs as its own process.
+    #[cfg(all(feature = "webkit", target_os = "linux"))]
+    if std::env::args().nth(1).as_deref() == Some("--music-login") {
+        return sloptube_music::login_helper::main();
+    }
+    env_logger::Builder::from_env(
+        env_logger::Env::default().default_filter_or("sloptube=info,sloptube_music=info"),
+    )
+    .init();
 
     // libadwaita skips its stylesheet entirely when GTK_THEME is set. A global
     // GTK_THEME=Adwaita[:dark] (common in tiling-WM setups to darken GTK3 apps)
@@ -41,8 +49,12 @@ fn main() -> glib::ExitCode {
         log::warn!("could not register the built-in gtk4paintablesink: {e}");
     }
     gio::resources_register_include!("sloptube.gresource").expect("failed to register resources");
+    sloptube_music::register_resources();
 
     if std::env::args().any(|a| a == "--selftest") {
+        if std::env::args().any(|a| a == "--music") {
+            return sloptube_music::selftest();
+        }
         let support = player::decoders::probe();
         println!("{}", support.summary());
         return match runtime::runtime().block_on(selftest::run()) {
@@ -54,7 +66,7 @@ fn main() -> glib::ExitCode {
         };
     }
 
-    // Our own flags; everything else goes to GApplication (URLs to open, --help, ...).
+    // Our own flags; everything else goes to GApplication (--music, URLs to open, --help, ...).
     let mut args: Vec<String> = Vec::new();
     for a in std::env::args() {
         if a == "--diagnose" {
@@ -70,5 +82,27 @@ fn main() -> glib::ExitCode {
         // A separate instance so it never talks to an already-running SlopTube.
         app.set_flags(app.flags() | gio::ApplicationFlags::NON_UNIQUE);
     }
+    // Quit cleanly on SIGTERM/SIGINT (logout, Ctrl+C) so Music's queue and library are saved.
+    runtime::spawn(async {
+        use tokio::signal::unix::{SignalKind, signal};
+        let (Ok(mut term), Ok(mut int)) = (signal(SignalKind::terminate()), signal(SignalKind::interrupt())) else {
+            return;
+        };
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+        glib::MainContext::default().invoke(|| {
+            if let Some(app) = gio::Application::default() {
+                app.quit();
+            }
+        });
+        // A second one while quitting doesn't wait.
+        tokio::select! {
+            _ = term.recv() => {}
+            _ = int.recv() => {}
+        }
+        std::process::exit(1);
+    });
     app.run_with_args(&args)
 }

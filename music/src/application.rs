@@ -1,9 +1,16 @@
-//! The AdwApplication: startup, actions, styling, window management.
+//! Music inside SlopTube's application: setting up on first use, the window,
+//! links, and the app-wide dialogs.
+//!
+//! Nothing here runs until Music is first opened: launching SlopTube alone
+//! doesn't read Music's session, restore its queue or register its MPRIS
+//! player.
+
+use std::cell::Cell;
 
 use adw::prelude::*;
-use adw::subclass::prelude::*;
-use gtk::{gdk, gio, glib};
+use gtk::{gio, glib};
 
+use crate::account::Account;
 use crate::api;
 use crate::config;
 use crate::library::Library;
@@ -13,223 +20,181 @@ use crate::settings;
 use crate::ui::window::Window;
 use crate::ui::{self, Nav};
 
-mod imp {
-    use super::*;
+pub use crate::config::{APP_ID, APP_NAME, RESOURCE_BASE};
+pub use crate::ui::window::WINDOW_CLASS;
 
-    #[derive(Default)]
-    pub struct Application {
-        pub mpris_started: std::cell::Cell<bool>,
+thread_local! {
+    static STARTED: Cell<bool> = const { Cell::new(false) };
+}
+
+/// Register Music's resources (stylesheet, icons) under [`RESOURCE_BASE`].
+pub fn register_resources() {
+    gio::resources_register_include!("sloptube-music.gresource").expect("failed to register Music's resources");
+}
+
+/// Set Music up the first time it's opened.
+fn start(app: &adw::Application) {
+    if STARTED.replace(true) {
+        return;
     }
-
-    #[glib::object_subclass]
-    impl ObjectSubclass for Application {
-        const NAME: &'static str = "StmApplication";
-        type Type = super::Application;
-        type ParentType = adw::Application;
-    }
-
-    impl ObjectImpl for Application {}
-
-    impl ApplicationImpl for Application {
-        fn startup(&self) {
-            self.parent_startup();
-            let app = self.obj();
-            glib::set_application_name(config::APP_NAME);
-            gtk::Window::set_default_icon_name(config::APP_ID);
-            let display = gdk::Display::default().expect("no display");
-            gtk::IconTheme::for_display(&display).add_resource_path(&format!("{}/icons", config::RESOURCE_BASE));
-            let css = gtk::CssProvider::new();
-            css.load_from_resource(&format!("{}/style.css", config::RESOURCE_BASE));
-            gtk::style_context_add_provider_for_display(&display, &css, gtk::STYLE_PROVIDER_PRIORITY_APPLICATION);
-
-            let s = settings::get();
-            ui::preferences::apply_color_scheme(s.color_scheme);
-            api::client().set_region(s.region.clone());
-            app.setup_actions();
-            runtime::spawn(async {
-                if let Err(e) = api::client().refresh_client_version().await {
-                    log::debug!("could not refresh the client version: {e:#}");
-                }
-            });
-            crate::account::Account::get().load_stored();
-            crate::image::warm_up_connections();
-            // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.
-            Playback::get().restore_session();
+    let s = settings::get();
+    api::client().set_region(s.region.clone());
+    runtime::spawn(async {
+        if let Err(e) = api::client().refresh_client_version().await {
+            log::debug!("could not refresh the client version: {e:#}");
         }
+    });
+    Account::get().load_stored();
+    crate::image::warm_up_connections();
+    let pb = Playback::get();
+    // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.
+    pb.restore_session();
 
-        fn activate(&self) {
-            self.parent_activate();
-            self.obj().main_window().present();
+    let raise = {
+        let app = app.downgrade();
+        move || {
+            if let Some(app) = app.upgrade() {
+                present(&app);
+            }
         }
-
-        fn shutdown(&self) {
-            let pb = Playback::get();
-            pb.save_session();
-            Library::get().save_now();
-            pb.player().shutdown(std::time::Duration::from_millis(800));
-            self.parent_shutdown();
+    };
+    let quit = {
+        let app = app.downgrade();
+        move || {
+            if let Some(app) = app.upgrade() {
+                close(&app);
+            }
         }
+    };
+    glib::spawn_future_local(async move {
+        if let Err(e) = crate::mpris::setup(Playback::get(), raise, quit).await {
+            log::warn!("MPRIS unavailable for Music: {e:#}");
+        }
+    });
+}
 
-        fn open(&self, files: &[gio::File], _hint: &str) {
-            let win = self.obj().main_window();
-            win.present();
-            for f in files {
-                let uri = f.uri().to_string();
-                match ui::nav_for_url(&uri) {
-                    Some(nav) => win.navigate(nav),
-                    None => {
-                        let arg = f
-                            .basename()
-                            .map(|b| b.to_string_lossy().into_owned())
-                            .unwrap_or_default();
-                        if arg.len() == 11 && arg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-                            win.navigate(Nav::Play(api::WatchTarget {
-                                video_id: Some(arg),
-                                ..Default::default()
-                            }));
-                        } else {
-                            win.toast(&format!("Not a YouTube Music link: {uri}"));
-                        }
-                    }
+/// The Music window (created, and Music set up, the first time).
+pub fn window(app: &adw::Application) -> Window {
+    start(app);
+    app.windows()
+        .into_iter()
+        .find_map(|w| w.downcast::<Window>().ok())
+        .unwrap_or_else(|| Window::new(app))
+}
+
+/// Show the Music window.
+pub fn present(app: &adw::Application) {
+    window(app).present();
+}
+
+/// Open links in Music: music.youtube.com, youtube.com and youtu.be links,
+/// or bare video ids.
+pub fn open(app: &adw::Application, files: &[gio::File]) {
+    let win = window(app);
+    win.present();
+    for f in files {
+        let uri = f.uri().to_string();
+        match ui::nav_for_url(&uri) {
+            Some(nav) => win.navigate(nav),
+            None => {
+                let arg = f
+                    .basename()
+                    .map(|b| b.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                if arg.len() == 11 && arg.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
+                    win.navigate(Nav::Play(api::WatchTarget {
+                        video_id: Some(arg),
+                        ..Default::default()
+                    }));
+                } else {
+                    win.toast(&format!("Not a YouTube Music link: {uri}"));
                 }
             }
         }
     }
-
-    impl GtkApplicationImpl for Application {}
-    impl AdwApplicationImpl for Application {}
 }
 
-glib::wrapper! {
-    pub struct Application(ObjectSubclass<imp::Application>)
-        @extends adw::Application, gtk::Application, gio::Application,
-        @implements gio::ActionGroup, gio::ActionMap;
+/// Whether `window` is Music's.
+pub fn owns(window: &gtk::Window) -> bool {
+    window.is::<Window>()
 }
 
-impl Default for Application {
-    fn default() -> Self {
-        Self::new()
+/// Pause the music and close its window; the rest of SlopTube keeps running
+/// (MPRIS "Quit").
+pub fn close(app: &adw::Application) {
+    if STARTED.get() {
+        let pb = Playback::get();
+        pb.player().pause();
+        pb.save_session();
+        Library::get().save_now();
     }
-}
-
-impl Application {
-    pub fn new() -> Self {
-        glib::Object::builder()
-            .property("application-id", config::APP_ID)
-            .property("flags", gio::ApplicationFlags::HANDLES_OPEN)
-            .property("resource-base-path", config::RESOURCE_BASE)
-            .build()
-    }
-
-    pub fn main_window(&self) -> Window {
-        if let Some(w) = self.windows().into_iter().find_map(|w| w.downcast::<Window>().ok()) {
-            return w;
+    for w in app.windows() {
+        if w.is::<Window>() {
+            // Not close(): with a dialog open, that only closes the dialog.
+            w.destroy();
         }
-        let win = Window::new(self.upcast_ref());
-        if !self.imp().mpris_started.replace(true) {
-            let raise = {
-                let app = self.downgrade();
-                move || {
-                    if let Some(app) = app.upgrade() {
-                        app.main_window().present();
-                    }
-                }
-            };
-            let quit = {
-                let app = self.downgrade();
-                move || {
-                    if let Some(app) = app.upgrade() {
-                        app.quit();
-                    }
-                }
-            };
-            glib::spawn_future_local(async move {
-                if let Err(e) = crate::mpris::setup(Playback::get(), raise, quit).await {
-                    log::warn!("MPRIS unavailable: {e:#}");
-                }
-            });
-        }
-        win
-    }
-
-    fn setup_actions(&self) {
-        let add = |name: &str, f: fn(&Application)| {
-            let a = gio::SimpleAction::new(name, None);
-            let app = self.downgrade();
-            a.connect_activate(move |_, _| {
-                if let Some(app) = app.upgrade() {
-                    f(&app);
-                }
-            });
-            self.add_action(&a);
-        };
-        add("quit", |app| {
-            Playback::get().player().pause();
-            app.quit();
-        });
-        add("preferences", |app| ui::preferences::present(&app.main_window()));
-        add("about", |app| app.show_about());
-        add("shortcuts", |app| show_shortcuts(&app.main_window()));
-        add("sign-in", |app| {
-            let win = app.main_window();
-            win.present();
-            ui::login::present(&win);
-        });
-        // app.search('query') searches; an empty query opens the search page.
-        let search = gio::SimpleAction::new("search", Some(glib::VariantTy::STRING));
-        search.connect_activate(glib::clone!(
-            #[weak(rename_to = app)]
-            self,
-            move |_, param| {
-                let q = param.and_then(|p| p.str().map(str::to_owned)).unwrap_or_default();
-                let win = app.main_window();
-                win.present();
-                win.open_search((!q.is_empty()).then_some(q.as_str()));
-            }
-        ));
-        self.add_action(&search);
-
-        self.set_accels_for_action("app.quit", &["<Control>q"]);
-        self.set_accels_for_action("app.preferences", &["<Control>comma"]);
-        self.set_accels_for_action("app.shortcuts", &["<Control>question"]);
-        self.set_accels_for_action("win.search", &["<Control>f", "<Control>k", "slash"]);
-        self.set_accels_for_action("win.refresh", &["<Control>r", "F5"]);
-        self.set_accels_for_action("win.open-link", &["<Control>l"]);
-        self.set_accels_for_action("win.toggle-player", &["<Control>j"]);
-        self.set_accels_for_action("window.close", &["<Control>w"]);
-    }
-
-    fn show_about(&self) {
-        let about = adw::AboutDialog::builder()
-            .application_name(config::APP_NAME)
-            .application_icon(config::APP_ID)
-            .version(config::VERSION)
-            .developer_name("SlopTube contributors")
-            .license_type(gtk::License::Gpl30)
-            .comments("A lightweight native YouTube Music client.\n\nNot affiliated with YouTube or Google.")
-            .debug_info(format!(
-                "GTK {}.{}.{}\nlibadwaita {}.{}.{}\nGStreamer {}\nyt-dlp: {}\n",
-                gtk::major_version(),
-                gtk::minor_version(),
-                gtk::micro_version(),
-                adw::major_version(),
-                adw::minor_version(),
-                adw::micro_version(),
-                gst::version_string(),
-                crate::extractor::ytdlp_path()
-                    .map(|p| p.display().to_string())
-                    .unwrap_or_else(|| "not found".into()),
-            ))
-            .build();
-        about.add_credit_section(
-            Some("Built on"),
-            &["GTK & libadwaita", "GStreamer", "yt-dlp", "Material Symbols (icons, Apache-2.0)"],
-        );
-        about.present(Some(&self.main_window()));
     }
 }
 
-fn show_shortcuts(parent: &Window) {
+/// Pause Music, if it's playing.
+pub fn pause() {
+    if STARTED.get() {
+        let player = Playback::get().player();
+        if player.is_playing_intent() {
+            player.pause();
+        }
+    }
+}
+
+/// Before the application exits: save the queue and the library, and bring
+/// the player down.
+pub fn shutdown() {
+    if !STARTED.get() {
+        return;
+    }
+    let pb = Playback::get();
+    pb.save_session();
+    Library::get().save_now();
+    pb.player().shutdown(std::time::Duration::from_millis(800));
+}
+
+/// Music's preferences, over `parent`.
+pub fn show_preferences(parent: &impl IsA<gtk::Widget>) {
+    ui::preferences::present(parent);
+}
+
+/// Music's About dialog, over `parent`.
+pub fn show_about(parent: &impl IsA<gtk::Widget>) {
+    let about = adw::AboutDialog::builder()
+        .application_name(config::APP_NAME)
+        .application_icon(config::APP_ID)
+        .version(config::VERSION)
+        .developer_name("SlopTube contributors")
+        .license_type(gtk::License::Gpl30)
+        .comments("A lightweight native YouTube Music client.\n\nNot affiliated with YouTube or Google.")
+        .debug_info(format!(
+            "GTK {}.{}.{}\nlibadwaita {}.{}.{}\nGStreamer {}\nyt-dlp: {}\n",
+            gtk::major_version(),
+            gtk::minor_version(),
+            gtk::micro_version(),
+            adw::major_version(),
+            adw::minor_version(),
+            adw::micro_version(),
+            gst::version_string(),
+            crate::extractor::ytdlp_path()
+                .map(|p| p.display().to_string())
+                .unwrap_or_else(|| "not found".into()),
+        ))
+        .build();
+    about.add_credit_section(
+        Some("Built on"),
+        &["GTK & libadwaita", "GStreamer", "yt-dlp", "Material Symbols (icons, Apache-2.0)"],
+    );
+    about.present(Some(parent));
+}
+
+/// Music's keyboard shortcuts, over `parent`.
+pub fn show_shortcuts(parent: &impl IsA<gtk::Widget>) {
     let dialog = adw::Dialog::builder()
         .title("Keyboard Shortcuts")
         .content_width(440)
