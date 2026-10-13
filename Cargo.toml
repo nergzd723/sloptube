@@ -36,8 +36,6 @@ url = "2"
 rand = "0.9"
 log = "0.4"
 env_logger = { version = "0.11", default-features = false, features = ["auto-color", "humantime"] }
-# Most thumbnails are WebP, which gdk-pixbuf can't always decode (e.g. on macOS)
-image-webp = "0.2.4"
 
 mpris-server = "0.10"
 

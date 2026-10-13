@@ -1,4 +1,5 @@
-//! Remote image loading with small, size-bounded caches.
+//! Remote image loading with small, size-bounded caches, for both apps (one
+//! budget and one connection pool for the process).
 //!
 //! Images are downloaded on the I/O runtime and decoded on a worker thread *at
 //! the size they are shown*, so a feed full of thumbnails costs a few hundred KB
@@ -18,7 +19,9 @@
 //! of a feed first; a request nobody wants any more by its turn is dropped. The
 //! downloaded files are kept as well, so an image whose texture was evicted is
 //! decoded again rather than downloaded again.
-
+//!
+//! Google's image servers also scale on request (`innertube::model::thumb_url`),
+//! so Music's artwork is asked for at the size it is shown.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -32,8 +35,8 @@ use tokio::sync::{Semaphore, oneshot};
 
 use crate::runtime;
 
-/// Decoded textures (counted at 4 bytes per pixel).
-const TEXTURE_BUDGET_BYTES: usize = 40 * 1024 * 1024;
+/// Decoded textures (counted at 4 bytes per pixel), for both apps.
+const TEXTURE_BUDGET_BYTES: usize = 48 * 1024 * 1024;
 /// Downloaded files; a thumbnail is 5-70 KB.
 const FILE_BUDGET_BYTES: usize = 16 * 1024 * 1024;
 /// Requests in flight per host.
@@ -94,6 +97,8 @@ struct Inflight {
     /// The widgets that asked for it. If none of them still shows this image by
     /// the time its download would start, the download is skipped.
     owners: Vec<glib::WeakRef<glib::Object>>,
+    /// Asked for without a widget (e.g. to compute a colour): always wanted.
+    ownerless: bool,
 }
 
 struct Cache {
@@ -119,8 +124,8 @@ thread_local! {
 }
 
 /// Round requested widths up to a few buckets so cache entries get reused.
-fn bucket(width: u32) -> u32 {
-    const BUCKETS: [u32; 8] = [48, 96, 176, 256, 360, 480, 720, 1280];
+pub fn bucket(width: u32) -> u32 {
+    const BUCKETS: [u32; 12] = [48, 64, 96, 128, 176, 256, 360, 480, 544, 720, 1080, 1280];
     BUCKETS.into_iter().find(|b| *b >= width).unwrap_or(1920)
 }
 
@@ -225,9 +230,10 @@ fn host_slots(url: &str) -> Rc<Semaphore> {
 fn still_wanted(k: &str) -> bool {
     CACHE.with(|c| {
         c.borrow().inflight.get(k).is_some_and(|i| {
-            i.owners
-                .iter()
-                .any(|o| o.upgrade().is_some_and(|o| wanted(&o) == k))
+            i.ownerless
+                || i.owners
+                    .iter()
+                    .any(|o| o.upgrade().is_some_and(|o| wanted(&o) == k))
         })
     })
 }
@@ -241,7 +247,7 @@ enum Fetch {
 }
 
 async fn fetch(url: &str) -> Fetch {
-    match crate::api::client::http().get(url).timeout(REQUEST_TIMEOUT).send().await {
+    match crate::innertube::client::http().get(url).timeout(REQUEST_TIMEOUT).send().await {
         Ok(resp) if resp.status().is_success() => match resp.bytes().await {
             Ok(b) => Fetch::Done(Arc::from(&b[..])),
             Err(e) => {
@@ -317,10 +323,19 @@ async fn produce(url: &str, width: u32, k: &str) -> Option<gdk::Texture> {
     tex
 }
 
+/// Load an image at (up to) `width` pixels wide (main thread), for anything that
+/// isn't a widget showing it, e.g. to compute a colour from it.
+pub async fn load(url: &str, width: u32) -> Option<gdk::Texture> {
+    if url.is_empty() {
+        return None;
+    }
+    load_for(url, width, None).await
+}
+
 /// Load an image at (up to) `width` pixels wide for `owner`, a widget whose
 /// wanted key (see `remember`) is `key(url, width)`. Concurrent requests for
 /// the same image share one download.
-async fn load(url: &str, width: u32, owner: &glib::Object) -> Option<gdk::Texture> {
+async fn load_for(url: &str, width: u32, owner: Option<&glib::Object>) -> Option<gdk::Texture> {
     let k = key(url, width);
     if let Some(t) = CACHE.with(|c| c.borrow_mut().textures.get(&k)) {
         return Some(t);
@@ -330,7 +345,10 @@ async fn load(url: &str, width: u32, owner: &glib::Object) -> Option<gdk::Textur
         let mut c = c.borrow_mut();
         let entry = c.inflight.entry(k.clone()).or_default();
         entry.waiters.push(tx);
-        entry.owners.push(owner.downgrade());
+        match owner {
+            Some(o) => entry.owners.push(o.downgrade()),
+            None => entry.ownerless = true,
+        }
         entry.waiters.len() == 1
     });
     if first {
@@ -352,6 +370,23 @@ async fn load(url: &str, width: u32, owner: &glib::Object) -> Option<gdk::Textur
     rx.await.ok().flatten()
 }
 
+/// Open connections to the image servers ahead of the first thumbnails, so they
+/// don't wait for TLS handshakes (connections stay pooled for a minute).
+pub fn warm_up_connections() {
+    crate::runtime::spawn(async {
+        let hosts = [
+            "https://yt3.googleusercontent.com/",
+            "https://lh3.googleusercontent.com/",
+            "https://i.ytimg.com/",
+            "https://yt3.ggpht.com/",
+        ];
+        let requests = hosts.map(|h| crate::innertube::client::http().head(h).send());
+        for r in requests {
+            let _ = r.await;
+        }
+    });
+}
+
 const URL_KEY: &str = "sloptube-image-url";
 
 fn remember(obj: &impl IsA<glib::Object>, k: &str) {
@@ -371,64 +406,82 @@ fn wanted(obj: &impl IsA<glib::Object>) -> String {
     }
 }
 
-/// Show a remote image in a `GtkPicture`, decoded for `width` device pixels.
-/// Late results for recycled widgets are ignored.
-pub fn set_picture(picture: &gtk::Picture, url: Option<&str>, width: u32) {
-    let width = bucket(width);
+/// The decoded texture, if it's in memory already (no loading).
+pub fn cached_texture(url: &str, width: u32) -> Option<gdk::Texture> {
+    CACHE.with(|c| c.borrow_mut().textures.get(&key(url, width)))
+}
+
+/// Whether `target` already shows (or is loading) this image.
+pub fn is_wanted(target: &impl IsA<glib::Object>, url: &str, width: u32) -> bool {
+    wanted(target) == key(url, width)
+}
+
+/// Something that can show a loaded texture.
+pub trait ArtTarget: IsA<glib::Object> + IsA<gtk::Widget> {
+    fn show_texture(&self, texture: Option<&gdk::Texture>);
+    fn has_texture(&self) -> bool;
+}
+
+impl ArtTarget for gtk::Picture {
+    fn show_texture(&self, texture: Option<&gdk::Texture>) {
+        self.set_paintable(texture);
+    }
+
+    fn has_texture(&self) -> bool {
+        self.paintable().is_some()
+    }
+}
+
+impl ArtTarget for adw::Avatar {
+    fn show_texture(&self, texture: Option<&gdk::Texture>) {
+        self.set_custom_image(texture);
+    }
+
+    fn has_texture(&self) -> bool {
+        self.custom_image().is_some()
+    }
+}
+
+/// Show the image at `url` in `target`, decoded `width` pixels wide (already a
+/// [`bucket`]). Late results for recycled widgets are ignored.
+pub fn set_url<T: ArtTarget>(target: &T, url: Option<&str>, width: u32) {
     let k = url.filter(|u| !u.is_empty()).map(|u| key(u, width)).unwrap_or_default();
-    if wanted(picture) == k && (k.is_empty() || picture.paintable().is_some()) {
+    if wanted(target) == k && (k.is_empty() || target.has_texture()) {
         return;
     }
-    remember(picture, &k);
+    remember(target, &k);
     let Some(url) = url.filter(|u| !u.is_empty()) else {
-        picture.set_paintable(None::<&gdk::Paintable>);
+        target.show_texture(None);
         return;
     };
     if let Some(t) = CACHE.with(|c| c.borrow_mut().textures.get(&k)) {
-        picture.set_paintable(Some(&t));
+        target.show_texture(Some(&t));
         return;
     }
-    picture.set_paintable(None::<&gdk::Paintable>);
-    let picture = picture.downgrade();
+    target.show_texture(None);
+    let weak = target.downgrade();
     let url = url.to_owned();
     glib::spawn_future_local(async move {
-        let Some(owner) = picture.upgrade() else { return };
-        let tex = load(&url, width, owner.upcast_ref()).await;
+        let Some(owner) = weak.upgrade() else { return };
+        let tex = load_for(&url, width, Some(owner.upcast_ref())).await;
         drop(owner);
-        if let Some(p) = picture.upgrade() {
-            if wanted(&p) == k {
-                p.set_paintable(tex.as_ref());
-            }
+        if let Some(t) = weak.upgrade()
+            && wanted(&t) == k
+        {
+            t.show_texture(tex.as_ref());
         }
     });
+}
+
+/// Show a remote image in a `GtkPicture`, decoded for `width` device pixels.
+pub fn set_picture(picture: &gtk::Picture, url: Option<&str>, width: u32) {
+    set_url(picture, url, bucket(width));
 }
 
 /// Show a remote image in an `AdwAvatar` (falls back to initials).
 pub fn set_avatar(avatar: &adw::Avatar, url: Option<&str>) {
     let width = bucket((avatar.size() * avatar.scale_factor().max(1)) as u32);
-    let k = url.filter(|u| !u.is_empty()).map(|u| key(u, width)).unwrap_or_default();
-    remember(avatar, &k);
-    let Some(url) = url.filter(|u| !u.is_empty()) else {
-        avatar.set_custom_image(None::<&gdk::Paintable>);
-        return;
-    };
-    if let Some(t) = CACHE.with(|c| c.borrow_mut().textures.get(&k)) {
-        avatar.set_custom_image(Some(&t));
-        return;
-    }
-    avatar.set_custom_image(None::<&gdk::Paintable>);
-    let avatar = avatar.downgrade();
-    let url = url.to_owned();
-    glib::spawn_future_local(async move {
-        let Some(owner) = avatar.upgrade() else { return };
-        let tex = load(&url, width, owner.upcast_ref()).await;
-        drop(owner);
-        if let Some(a) = avatar.upgrade() {
-            if wanted(&a) == k {
-                a.set_custom_image(tex.as_ref());
-            }
-        }
-    });
+    set_url(avatar, url, width);
 }
 
 /// Request avatar images at a size that suits the widget (YouTube URLs encode `=sNN`).

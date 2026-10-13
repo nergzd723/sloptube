@@ -21,6 +21,8 @@ serde_json = "1"
 log = "0.4"
 libc = "0.2"
 url = "2"
+# Most thumbnails are WebP, which gdk-pixbuf can't always decode (e.g. on macOS)
+image-webp = "0.2.4"
 
 # The Google session: storage, request signing, browser cookie import
 oo7 = { version = "0.6", default-features = false, features = ["tokio", "openssl_crypto"] }

@@ -5,7 +5,6 @@ mod css;
 mod diagnose;
 mod downloads;
 mod extractor;
-mod image;
 mod mpris;
 mod playback;
 mod player;
@@ -13,7 +12,7 @@ mod selftest;
 mod settings;
 mod ui;
 
-use common::{account, auth, runtime};
+use common::{account, auth, image, runtime};
 use gtk::prelude::*;
 use gtk::{gio, glib};
 

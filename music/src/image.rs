@@ -1,353 +1,47 @@
-//! Artwork loading with a small, size-bounded texture cache.
-//!
-//! Google's image servers scale on request, so artwork is fetched at the size
-//! it is shown (see `api::thumb_url`) and decoded at that size; a screen full
-//! of album covers costs a few megabytes. Widths are rounded up to a few
-//! buckets so cache entries get reused.
+//! Artwork: the shared image cache (`common::image`, re-exported here), and
+//! the dominant colour Now playing and album headers are tinted with.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::sync::Arc;
 
+pub use common::image::*;
+use gtk::gdk;
 use gtk::prelude::*;
-use gtk::{gdk, gdk_pixbuf, glib};
-use tokio::sync::oneshot;
 
 use crate::api::{self, Thumbnail};
-use crate::runtime;
-
-/// Decoded textures (what's on screen and around it).
-const CACHE_BUDGET_BYTES: usize = 24 * 1024 * 1024;
-/// Compressed downloads: ~400 thumbnails, so scrolling back re-decodes (a few
-/// milliseconds) instead of downloading again (hundreds).
-const BYTES_BUDGET: usize = 8 * 1024 * 1024;
-
-struct Entry {
-    texture: gdk::Texture,
-    bytes: usize,
-    last_use: u64,
-}
-
-#[derive(Default)]
-struct Cache {
-    entries: HashMap<String, Entry>,
-    total: usize,
-    clock: u64,
-    inflight: HashMap<String, Vec<oneshot::Sender<Option<gdk::Texture>>>>,
-    colors: HashMap<String, Option<gdk::RGBA>>,
-    /// url -> (JPEG bytes, last use)
-    bytes: HashMap<String, (Arc<Vec<u8>>, u64)>,
-    bytes_total: usize,
-}
-
-impl Cache {
-    fn get_bytes(&mut self, url: &str) -> Option<Arc<Vec<u8>>> {
-        self.clock += 1;
-        let clock = self.clock;
-        self.bytes.get_mut(url).map(|(b, t)| {
-            *t = clock;
-            b.clone()
-        })
-    }
-
-    fn insert_bytes(&mut self, url: String, data: Arc<Vec<u8>>) {
-        self.clock += 1;
-        self.bytes_total += data.len();
-        if let Some((old, _)) = self.bytes.insert(url, (data, self.clock)) {
-            self.bytes_total -= old.len();
-        }
-        while self.bytes_total > BYTES_BUDGET && self.bytes.len() > 1 {
-            let Some(oldest) = self.bytes.iter().min_by_key(|(_, (_, t))| *t).map(|(k, _)| k.clone()) else {
-                break;
-            };
-            if let Some((b, _)) = self.bytes.remove(&oldest) {
-                self.bytes_total -= b.len();
-            }
-        }
-    }
-
-    fn get(&mut self, key: &str) -> Option<gdk::Texture> {
-        self.clock += 1;
-        let clock = self.clock;
-        self.entries.get_mut(key).map(|e| {
-            e.last_use = clock;
-            e.texture.clone()
-        })
-    }
-
-    fn insert(&mut self, key: String, texture: gdk::Texture) {
-        let bytes = (texture.width() * texture.height() * 4) as usize;
-        self.clock += 1;
-        if let Some(old) = self.entries.insert(
-            key,
-            Entry {
-                texture,
-                bytes,
-                last_use: self.clock,
-            },
-        ) {
-            self.total -= old.bytes;
-        }
-        self.total += bytes;
-        while self.total > CACHE_BUDGET_BYTES && self.entries.len() > 1 {
-            let Some(oldest) = self.entries.iter().min_by_key(|(_, e)| e.last_use).map(|(k, _)| k.clone()) else {
-                break;
-            };
-            if let Some(e) = self.entries.remove(&oldest) {
-                self.total -= e.bytes;
-            }
-        }
-    }
-}
 
 thread_local! {
-    static CACHE: RefCell<Cache> = RefCell::new(Cache::default());
-}
-
-/// Round requested widths up to a few buckets so cache entries get reused.
-pub fn bucket(width: u32) -> u32 {
-    const BUCKETS: [u32; 9] = [48, 64, 96, 128, 176, 256, 360, 544, 720];
-    BUCKETS.into_iter().find(|b| *b >= width).unwrap_or(1080)
-}
-
-fn decode(bytes: &[u8], max_width: u32) -> Option<gdk_pixbuf::Pixbuf> {
-    let loader = gdk_pixbuf::PixbufLoader::new();
-    loader.connect_size_prepared(move |l, w, h| {
-        if w > max_width as i32 && w > 0 {
-            let nh = ((h as i64 * max_width as i64) / w as i64).max(1) as i32;
-            l.set_size(max_width as i32, nh);
-        }
-    });
-    let ok = loader.write(bytes).is_ok();
-    let _ = loader.close();
-    loader.pixbuf().filter(|_| ok)
-}
-
-/// Download (unless `cached` has the bytes) and decode an image off the main thread.
-async fn fetch(
-    url: String,
-    max_width: u32,
-    cached: Option<Arc<Vec<u8>>>,
-) -> Option<(gdk_pixbuf::Pixbuf, Arc<Vec<u8>>)> {
-    let res = runtime::run(async move {
-        let started = std::time::Instant::now();
-        let from_cache = cached.is_some();
-        let data = match cached {
-            Some(d) => d,
-            None => {
-                let resp = api::client::http().get(&url).send().await.ok()?;
-                if !resp.status().is_success() {
-                    return None;
-                }
-                Arc::new(resp.bytes().await.ok()?.to_vec())
-            }
-        };
-        let fetched = started.elapsed();
-        let input = data.clone();
-        let pixbuf = tokio::task::spawn_blocking(move || decode(&input, max_width).map(SendPixbuf))
-            .await
-            .ok()
-            .flatten()?;
-        log::debug!(
-            "image {}: {} in {fetched:?}, decoded at {:?}, {} B",
-            url.split('/').nth(2).unwrap_or(""),
-            if from_cache { "cached" } else { "downloaded" },
-            started.elapsed(),
-            data.len()
-        );
-        Some((pixbuf, data))
-    })
-    .await;
-    res.map(|(p, d)| (p.0, d))
-}
-
-/// Open connections to the artwork servers ahead of the first thumbnails, so
-/// they don't wait for TLS handshakes (connections stay pooled for a minute).
-pub fn warm_up_connections() {
-    runtime::spawn(async {
-        let hosts = [
-            "https://yt3.googleusercontent.com/",
-            "https://lh3.googleusercontent.com/",
-            "https://i.ytimg.com/",
-            "https://yt3.ggpht.com/",
-        ];
-        let requests = hosts.map(|h| api::client::http().head(h).send());
-        for r in requests {
-            let _ = r.await;
-        }
-    });
-}
-
-fn texture_for(pixbuf: &gdk_pixbuf::Pixbuf) -> gdk::Texture {
-    // Straight (not premultiplied) alpha, like gdk-pixbuf's.
-    let format = if pixbuf.has_alpha() {
-        gdk::MemoryFormat::R8g8b8a8
-    } else {
-        gdk::MemoryFormat::R8g8b8
-    };
-    gdk::MemoryTexture::new(
-        pixbuf.width(),
-        pixbuf.height(),
-        format,
-        &pixbuf.read_pixel_bytes(),
-        pixbuf.rowstride() as usize,
-    )
-    .upcast()
-}
-
-/// Pixbufs are plain pixel buffers; this lets one cross back from the decoder thread.
-struct SendPixbuf(gdk_pixbuf::Pixbuf);
-// SAFETY: the pixbuf is created on the worker and only used on the main thread afterwards.
-unsafe impl Send for SendPixbuf {}
-
-/// Load an image (main thread). Concurrent requests for the same URL share one download.
-pub async fn load(url: &str, width: u32) -> Option<gdk::Texture> {
-    if url.is_empty() {
-        return None;
-    }
-    let key = format!("{width}|{url}");
-    if let Some(t) = CACHE.with(|c| c.borrow_mut().get(&key)) {
-        return Some(t);
-    }
-    let (tx, rx) = oneshot::channel();
-    let first = CACHE.with(|c| {
-        let mut c = c.borrow_mut();
-        let waiters = c.inflight.entry(key.clone()).or_default();
-        waiters.push(tx);
-        waiters.len() == 1
-    });
-    if first {
-        let url = url.to_owned();
-        let cached = CACHE.with(|c| c.borrow_mut().get_bytes(&url));
-        glib::spawn_future_local(async move {
-            let res = fetch(url.clone(), width, cached).await;
-            let tex = res.as_ref().map(|(p, _)| texture_for(p));
-            CACHE.with(|c| {
-                let mut c = c.borrow_mut();
-                if let Some((_, data)) = res {
-                    c.insert_bytes(url, data);
-                }
-                if let Some(t) = &tex {
-                    c.insert(key.clone(), t.clone());
-                }
-                for w in c.inflight.remove(&key).unwrap_or_default() {
-                    let _ = w.send(tex.clone());
-                }
-            });
-        });
-    }
-    rx.await.ok().flatten()
-}
-
-const URL_KEY: &str = "stmusic-image-key";
-
-fn remember(obj: &impl IsA<glib::Object>, k: &str) {
-    // SAFETY: the key is only ever used with `String` values.
-    unsafe {
-        obj.as_ref().set_data(URL_KEY, k.to_owned());
-    }
-}
-
-fn wanted(obj: &impl IsA<glib::Object>) -> String {
-    // SAFETY: see `remember`.
-    unsafe {
-        obj.as_ref()
-            .data::<String>(URL_KEY)
-            .map(|p| p.as_ref().clone())
-            .unwrap_or_default()
-    }
-}
-
-/// The decoded texture, if it's in memory already (no loading).
-pub fn cached_texture(url: &str, width: u32) -> Option<gdk::Texture> {
-    CACHE.with(|c| c.borrow_mut().get(&format!("{width}|{url}")))
-}
-
-/// Whether `target` already shows (or is loading) this image.
-pub fn is_wanted(target: &impl IsA<glib::Object>, url: &str, width: u32) -> bool {
-    wanted(target) == format!("{width}|{url}")
-}
-
-/// Something that can show a loaded texture.
-pub trait ArtTarget: IsA<glib::Object> + IsA<gtk::Widget> {
-    fn show_texture(&self, texture: Option<&gdk::Texture>);
-    fn has_texture(&self) -> bool;
-}
-
-impl ArtTarget for gtk::Picture {
-    fn show_texture(&self, texture: Option<&gdk::Texture>) {
-        self.set_paintable(texture);
-    }
-
-    fn has_texture(&self) -> bool {
-        self.paintable().is_some()
-    }
-}
-
-impl ArtTarget for adw::Avatar {
-    fn show_texture(&self, texture: Option<&gdk::Texture>) {
-        self.set_custom_image(texture);
-    }
-
-    fn has_texture(&self) -> bool {
-        self.custom_image().is_some()
-    }
-}
-
-/// Show the image at `url`, `width` pixels wide. Late results for recycled widgets are ignored.
-pub fn set_url<T: ArtTarget>(target: &T, url: Option<&str>, width: u32) {
-    let k = url.filter(|u| !u.is_empty()).map(|u| format!("{width}|{u}")).unwrap_or_default();
-    if wanted(target) == k && (k.is_empty() || target.has_texture()) {
-        return;
-    }
-    remember(target, &k);
-    let Some(url) = url.filter(|u| !u.is_empty()) else {
-        target.show_texture(None);
-        return;
-    };
-    if let Some(t) = CACHE.with(|c| c.borrow_mut().get(&k)) {
-        target.show_texture(Some(&t));
-        return;
-    }
-    target.show_texture(None);
-    let weak = target.downgrade();
-    let url = url.to_owned();
-    glib::spawn_future_local(async move {
-        let tex = load(&url, width).await;
-        if let Some(t) = weak.upgrade()
-            && wanted(&t) == k {
-                t.show_texture(tex.as_ref());
-            }
-    });
+    /// Artwork URL -> its colour (or none).
+    static COLORS: RefCell<HashMap<String, Option<gdk::RGBA>>> = RefCell::new(HashMap::new());
 }
 
 /// A dark, saturated tint from the artwork, for backgrounds behind white text.
 pub async fn dominant_color(thumbs: &[Thumbnail]) -> Option<gdk::RGBA> {
     let url = api::thumb_url(thumbs, 32)?;
-    if let Some(c) = CACHE.with(|c| c.borrow().colors.get(&url).cloned()) {
+    if let Some(c) = COLORS.with(|c| c.borrow().get(&url).cloned()) {
         return c;
     }
-    let pixbuf = fetch(url.clone(), 32, None).await;
-    let color = pixbuf.as_ref().and_then(|(p, _)| average_color(p));
-    CACHE.with(|c| {
+    let color = load(&url, 32).await.and_then(|t| average_color(&t));
+    COLORS.with(|c| {
         let mut c = c.borrow_mut();
-        if c.colors.len() > 256 {
-            c.colors.clear();
+        if c.len() > 256 {
+            c.clear();
         }
-        c.colors.insert(url, color);
+        c.insert(url, color);
     });
     color
 }
 
-fn average_color(p: &gdk_pixbuf::Pixbuf) -> Option<gdk::RGBA> {
-    let bytes = p.read_pixel_bytes();
+fn average_color(texture: &gdk::Texture) -> Option<gdk::RGBA> {
+    let mut downloader = gdk::TextureDownloader::new(texture);
+    downloader.set_format(gdk::MemoryFormat::R8g8b8a8);
+    let (bytes, stride) = downloader.download_bytes();
     let data: &[u8] = &bytes;
-    let (w, h) = (p.width() as usize, p.height() as usize);
-    let (stride, n) = (p.rowstride() as usize, p.n_channels() as usize);
+    let (w, h) = (texture.width() as usize, texture.height() as usize);
     let (mut r, mut g, mut b, mut total) = (0f64, 0f64, 0f64, 0f64);
     for y in 0..h {
         for x in 0..w {
-            let i = y * stride + x * n;
+            let i = y * stride + x * 4;
             if i + 2 >= data.len() {
                 continue;
             }
