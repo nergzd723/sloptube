@@ -11,6 +11,7 @@ pub mod extractor;
 pub mod image;
 pub mod innertube;
 pub mod links;
+pub mod lists;
 pub mod login;
 pub mod memory;
 pub mod paths;

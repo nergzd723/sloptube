@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::lists::Trickle;
 use common::touch;
 use gtk::{gio, glib};
 
@@ -258,6 +259,7 @@ mod imp {
         pub continuation: RefCell<Option<String>>,
         pub loading: Cell<bool>,
         pub generation: Cell<u64>,
+        pub trickle: Trickle,
         pub loaded: Cell<bool>,
         pub empty: RefCell<(String, String, String)>,
         pub on_loaded: RefCell<Vec<Box<dyn Fn(bool)>>>,
@@ -361,6 +363,11 @@ impl RowList {
         imp.scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.scrolled.set_vexpand(true);
         let adj = imp.scrolled.vadjustment();
+        imp.trickle.connect_drained(glib::clone!(
+            #[weak(rename_to = rl)]
+            self,
+            move || rl.maybe_load_more(&rl.imp().scrolled.vadjustment())
+        ));
         adj.connect_value_changed(glib::clone!(
             #[weak(rename_to = rl)]
             self,
@@ -405,15 +412,17 @@ impl RowList {
     /// Replace the content below the prefix.
     pub fn set_rows(&self, rows: Vec<Row>) {
         let imp = self.imp();
+        imp.trickle.clear();
         let model = self.model();
         let objs: Vec<glib::BoxedAnyObject> = rows.into_iter().map(glib::BoxedAnyObject::new).collect();
         let prefix = imp.prefix.get();
         model.splice(prefix, model.n_items() - prefix, &objs);
     }
 
+    /// Append rows a few per frame, so scrolling doesn't stall while a page goes in.
     pub fn append_rows(&self, rows: Vec<Row>) {
-        let objs: Vec<glib::BoxedAnyObject> = rows.into_iter().map(glib::BoxedAnyObject::new).collect();
-        self.model().extend_from_slice(&objs);
+        let objs = rows.into_iter().map(glib::BoxedAnyObject::new);
+        self.imp().trickle.append(self, &self.model(), objs);
     }
 
     /// Re-bind every row (e.g. after the layout changed between phone and desktop).
@@ -454,7 +463,8 @@ impl RowList {
     }
 
     fn maybe_load_more(&self, adj: &gtk::Adjustment) {
-        if adj.page_size() <= 0.0 || adj.upper() <= 0.0 || !self.is_mapped() {
+        // While a page is still being appended the end isn't real yet.
+        if adj.page_size() <= 0.0 || adj.upper() <= 0.0 || !self.is_mapped() || self.imp().trickle.is_pending() {
             return;
         }
         if adj.value() + adj.page_size() * 2.5 >= adj.upper() {

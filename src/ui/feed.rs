@@ -7,6 +7,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use common::chips::ChipRow;
+use common::lists::Trickle;
 use gtk::subclass::prelude::*;
 use gtk::{gio, glib};
 
@@ -41,8 +42,7 @@ mod imp {
         pub empty_icon: RefCell<String>,
         pub on_page: RefCell<Vec<Box<dyn Fn(&FeedPage, bool)>>>,
         /// Items of a further page still waiting to be appended (about one per frame).
-        pub pending: RefCell<std::collections::VecDeque<glib::BoxedAnyObject>>,
-        pub draining: Cell<bool>,
+        pub trickle: Trickle,
     }
 
     #[glib::object_subclass]
@@ -126,6 +126,12 @@ impl FeedView {
         // Infinite scroll: fetch the next page when within ~2 screens of the end,
         // also when the content doesn't fill the view yet (changed = new layout).
         let adj = imp.scrolled.vadjustment();
+        // Re-check once an appended page is all in and the end is real.
+        imp.trickle.connect_drained(glib::clone!(
+            #[weak(rename_to = feed)]
+            self,
+            move || feed.maybe_load_more(&feed.imp().scrolled.vadjustment())
+        ));
         adj.connect_value_changed(glib::clone!(
             #[weak(rename_to = feed)]
             self,
@@ -219,7 +225,7 @@ impl FeedView {
             return;
         }
         // While a page is still being appended the end isn't real yet.
-        if !self.imp().pending.borrow().is_empty() {
+        if self.imp().trickle.is_pending() {
             return;
         }
         if adj.value() + adj.page_size() * 2.5 >= adj.upper() {
@@ -307,12 +313,11 @@ impl FeedView {
             .map(glib::BoxedAnyObject::new)
             .collect();
         if replace {
-            imp.pending.borrow_mut().clear();
+            imp.trickle.clear();
             model.splice(0, model.n_items(), &objs);
             imp.scrolled.vadjustment().set_value(0.0);
         } else {
-            imp.pending.borrow_mut().extend(objs);
-            self.drain_pending();
+            imp.trickle.append(self, &model, objs);
         }
         imp.continuation.replace(page.continuation.clone());
         imp.loaded_once.set(true);
@@ -332,47 +337,6 @@ impl FeedView {
         for cb in imp.on_page.borrow().iter() {
             cb(&page, replace);
         }
-    }
-
-    /// Append pending items about one per frame. The grid view creates and binds a
-    /// card for every new item right away (it keeps ~30 rows of widgets), so a
-    /// whole page at once stalled scrolling for a couple of frames.
-    fn drain_pending(&self) {
-        let imp = self.imp();
-        if imp.draining.get() {
-            return;
-        }
-        if !self.is_mapped() {
-            // Nothing on screen to keep smooth.
-            let objs: Vec<_> = imp.pending.borrow_mut().drain(..).collect();
-            if let Some(model) = imp.model.borrow().as_ref() {
-                model.extend_from_slice(&objs);
-            }
-            return;
-        }
-        imp.draining.set(true);
-        self.add_tick_callback(|feed, _| {
-            let imp = feed.imp();
-            let Some(model) = imp.model.borrow().clone() else {
-                imp.draining.set(false);
-                return glib::ControlFlow::Break;
-            };
-            let start = std::time::Instant::now();
-            loop {
-                let Some(obj) = imp.pending.borrow_mut().pop_front() else { break };
-                model.append(&obj);
-                if start.elapsed() >= std::time::Duration::from_millis(1) {
-                    break;
-                }
-            }
-            if imp.pending.borrow().is_empty() {
-                imp.draining.set(false);
-                // Re-check now that the end is real.
-                feed.maybe_load_more(&imp.scrolled.vadjustment());
-                return glib::ControlFlow::Break;
-            }
-            glib::ControlFlow::Continue
-        });
     }
 
     fn set_chips(&self, chips: &[Chip]) {
