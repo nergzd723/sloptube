@@ -58,7 +58,6 @@ A video goes through these steps:
 | `src/api/client.rs` | SlopTube's InnerTube endpoints, on the shared `WEB` client core (`common::innertube::client`). |
 | `src/api/parse.rs` | Tolerant parsers turning InnerTube JSON into `api::model` types, and their tests. |
 | `src/api/model.rs` | Plain data types: `VideoItem`, `Item`, `FeedPage`, `VideoDetails`, `RichText`, `Comment`, ... |
-| `src/extractor.rs`, `src/ytdlp_helper.py` | Stream extraction through a resident yt-dlp process, with a CLI fallback and a cache. |
 | `src/player/decoders.rs` | Decoder discovery and hardware/software ranking. |
 | `src/player/formats.rs` | Stream selection and the quality menu. |
 | `src/player/dash.rs` | DASH manifests for MP4 streams. |
@@ -90,6 +89,7 @@ A video goes through these steps:
 | `common/src/account.rs` | The signed-in state as a GObject the UI binds to (one for both apps). |
 | `common/src/login.rs` | The sign-in dialog. |
 | `common/src/image.rs` | Image download, decoding at display size (WebP in-process), and the texture and file caches. |
+| `common/src/extractor.rs`, `ytdlp_helper.py` | Stream extraction through a resident yt-dlp process (one for both apps), with a CLI fallback and a cache. |
 | `music/` | SlopTube Music, a library crate in the workspace (see [SlopTube Music](#sloptube-music)). |
 
 ## Threads and processes
@@ -117,8 +117,8 @@ main thread.
 **GStreamer streaming threads** belong to GStreamer. Bus messages reach the
 main thread through a bus watch.
 
-**yt-dlp helper** (`extractor.rs`, `ytdlp_helper.py`): one resident Python
-process, see [Streams](#streams-yt-dlp).
+**yt-dlp helper** (`common/src/extractor.rs`, `ytdlp_helper.py`): one resident Python
+process for both apps, while in use; see [Streams](#streams-yt-dlp).
 
 **Downloads** (`downloads.rs`) run the `yt-dlp` CLI, one `gio::Subprocess`
 each, and parse its progress lines on the main loop.
@@ -203,7 +203,10 @@ Resolving YouTube stream URLs needs signature deciphering, JavaScript
 challenges and frequent fixes, so SlopTube leaves it to yt-dlp.
 
 Importing yt-dlp takes a noticeable time, so instead of running the CLI per
-video, `extractor.rs` keeps one Python process with yt-dlp imported:
+video, `common/src/extractor.rs` keeps one Python process with yt-dlp imported,
+shared by SlopTube and Music. It is started on demand (and early, when someone
+browses: `warm_up_soon`) and exits after five idle minutes
+(`SLOPTUBE_HELPER_IDLE`), since it costs 55-80 MB:
 
 - It finds `yt-dlp` (`SLOPTUBE_YTDLP` or `PATH`), takes the interpreter from the
   script's shebang (or `SLOPTUBE_YTDLP_PYTHON`) and, when the file is the
@@ -212,7 +215,7 @@ video, `extractor.rs` keeps one Python process with yt-dlp imported:
   binary with `include_str!`. The helper answers with
   `{"id": 0, "ready": "<yt-dlp version>"}` (or `"fatal"`) within 20 seconds.
 - **Protocol**: one JSON object per line in each direction. Requests are
-  `{"id": N, "op": "extract", "url": "...", "cookiefile": "..."}` (or
+  `{"id": N, "op": "extract", "url": "...", "cookiefile": "...", "audio_only": bool}` (or
   `"op": "version"`); answers are `{"id": N, "ok": {...}}` or
   `{"id": N, "error": "...", "network": bool}`, where `network` means yt-dlp
   could not reach YouTube at all (a `TransportError`; the app turns it into
@@ -220,7 +223,8 @@ video, `extractor.rs` keeps one Python process with yt-dlp imported:
   and the app matches answers to requests by `id`.
 - The answer is a trimmed info dict: `id`, `title`, `duration`, `is_live`,
   `live_status`, `formats` (selected keys only), `chapters`, `captions`,
-  `tracking` and `ranges`.
+  `tracking` and `ranges`. Music's requests are `audio_only`: just the audio
+  formats, without captions or ranges.
 
 `tracking` and `ranges` are not something yt-dlp provides. The helper wraps
 `YoutubeIE._extract_formats_and_subtitles` to read them from the raw player
@@ -234,10 +238,13 @@ extraction still works but those two fields come back empty, which means plain
 HTTP streams for MP4 and no history.
 
 If the helper cannot be started, extraction falls back to `yt-dlp -J` per
-video, without `ranges` or `tracking`. Results are cached for two hours per
-video. When signed in (and *Use account for video streams* is on), the session
-is written as a Netscape cookie file to `$XDG_RUNTIME_DIR/sloptube/cookies.txt`
-and passed as `cookiefile`.
+video, without `ranges` or `tracking`. Requests for the same stream in flight
+share one extraction. Results are cached for two hours (at most 96), keyed by
+video, request kind and identity, so a stream extracted signed out isn't
+reused after signing in. When signed in (and *Use account for video streams*
+is on), the session is written as a Netscape cookie file to
+`$XDG_RUNTIME_DIR/sloptube/cookies-video.txt` (Music: `cookies-music.txt`) and
+passed as `cookiefile`.
 
 ## Playback
 

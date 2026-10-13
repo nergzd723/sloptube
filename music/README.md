@@ -25,7 +25,7 @@ and does it natively, with memory use as the first concern:
   kept in a small LRU texture cache;
 - JSON is parsed into small model types and dropped at once, and glibc is
   asked to give freed memory back;
-- the yt-dlp helper (a Python process, 55–80 MB) only runs while needed and
+- the yt-dlp helper (a Python process, 55–80 MB, shared with SlopTube) only runs while needed and
   exits after five idle minutes.
 
 As a separate program, the release build used about **93 MB** of resident
@@ -181,8 +181,8 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `sloptube --music --selftest` | Without a window: check home, continuations, chips, explore, search and its continuation, suggestions, an album, an artist, a playlist, a radio and its continuation, lyrics, related, and two extractions, printing what came back and the memory used; with a stored session, also the account, the signed-in Home and each library section (names and counts only). |
 | `RUST_LOG` | Log filter, `sloptube=info,sloptube_music=info` by default; `sloptube_music=debug` logs every request with its time. |
 | `SLOPTUBE_MUSIC_WINDOW_SIZE` | Initial window size, e.g. `390x844` for the phone layout. |
-| `SLOPTUBE_MUSIC_HELPER_IDLE` | Seconds before the idle yt-dlp helper exits (300; 0 keeps it running). |
-| `SLOPTUBE_MUSIC_YTDLP`, `SLOPTUBE_MUSIC_YTDLP_PYTHON` | The yt-dlp to use, and the Python for its helper. |
+| `SLOPTUBE_HELPER_IDLE` | Seconds before the idle yt-dlp helper (shared with SlopTube) exits (300; 0 keeps it running). |
+| `SLOPTUBE_YTDLP`, `SLOPTUBE_YTDLP_PYTHON` | The yt-dlp to use, and the Python for its helper. |
 | `SLOPTUBE_MUSIC_AUDIO_SINK` | A GStreamer audio sink to use instead of the default, e.g. `fakesink` to test silently. |
 | `SLOPTUBE_MUSIC_FIXTURES` | Directory of saved responses for the parser tests (see below). |
 
@@ -204,7 +204,7 @@ does it. Signing out removes the session, the cookie file and nothing else.
 | `src/api/` | Music's InnerTube endpoints on the shared `WEB_REMIX` client core, tolerant parsers, model types. |
 | `src/account.rs` | Handing the shared session (`common::account`) to yt-dlp. |
 | `src/application.rs` | What SlopTube calls: setting up on first use, the window, links, the dialogs, and the playback hooks. |
-| `src/extractor.rs`, `src/ytdlp_helper.py` | Audio stream URLs through a resident yt-dlp helper (idle exit, CLI fallback, cache, shared in-flight requests). |
+| `src/extractor.rs` | Music's requests to the shared yt-dlp extractor (`common::extractor`), and picking the audio stream. |
 | `src/player.rs` | The GStreamer player: audio-only playbin3, control thread, gapless hand-over. |
 | `src/playback.rs` | The queue: radios, autoplay, shuffle/repeat, prefetching, retries, session restore. |
 | `src/library.rs` | The local library. |

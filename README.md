@@ -335,6 +335,7 @@ off.
 | `GST_DEBUG` | GStreamer's own logging, e.g. `GST_DEBUG=2`. |
 | `SLOPTUBE_YTDLP` | Path of the `yt-dlp` to use instead of the one on `PATH`. |
 | `SLOPTUBE_YTDLP_PYTHON` | Python interpreter for the yt-dlp helper (normally taken from the `yt-dlp` script's shebang). |
+| `SLOPTUBE_HELPER_IDLE` | Seconds before the idle yt-dlp helper (shared with Music) exits (300; 0 keeps it running). |
 | `SLOPTUBE_WINDOW_SIZE` | Initial window size, e.g. `390x844` to try the phone layout. |
 | `SLOPTUBE_NO_DECODER_RESET` | Don't reset V4L2 decoders around seeks. |
 | `SLOPTUBE_DIAGNOSE_SECS` | How long `--diagnose` runs (14 seconds by default, at least 10). |
