@@ -242,9 +242,4 @@ impl Client {
         .await
         .map(drop)
     }
-
-    /// Fire a playback-statistics ping (watch history / resume position).
-    pub async fn stats_ping(&self, url: &str) -> Result<()> {
-        self.ping(url).await
-    }
 }

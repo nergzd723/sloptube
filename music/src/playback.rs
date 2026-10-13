@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::sync::OnceLock;
 
 use common::extractor::NetworkError;
+use common::history::Tracker;
 use common::recovery::Recovery;
 use gtk::glib::subclass::Signal;
 use gtk::prelude::*;
@@ -123,6 +124,8 @@ mod imp {
         pub extending: Cell<bool>,
         pub resume_at: Cell<Option<f64>>,
         pub counted: Cell<bool>,
+        /// Reports the current track to the account's history.
+        pub tracker: RefCell<Option<Tracker>>,
         pub info: RefCell<HashMap<String, TrackInfo>>,
         pub volume_save: RefCell<Option<glib::SourceId>>,
     }
@@ -154,6 +157,7 @@ mod imp {
                 extending: Default::default(),
                 resume_at: Default::default(),
                 counted: Default::default(),
+                tracker: Default::default(),
                 info: Default::default(),
                 volume_save: Default::default(),
             }
@@ -258,15 +262,34 @@ impl Playback {
                         if !imp.counted.replace(true)
                             && let Some(t) = pb.current_track() {
                                 Library::get().add_history(&t);
-                                pb.report_play(&t.video_id);
+                                pb.start_tracking(&t.video_id);
                             }
                     }
                     PlayState::Paused => {
                         pb.set_loading(false);
                         pb.save_session();
+                        if let Some(t) = imp.tracker.borrow_mut().as_mut() {
+                            t.flush(p.position(), p.duration());
+                        }
+                    }
+                    PlayState::Ended => {
+                        if let Some(t) = imp.tracker.borrow_mut().as_mut() {
+                            t.finish();
+                        }
                     }
                     PlayState::Error => pb.set_loading(false),
                     _ => {}
+                }
+            }
+        ));
+        player.connect_position_notify(glib::clone!(
+            #[weak(rename_to = pb)]
+            self,
+            move |p| {
+                if p.state() == PlayState::Playing
+                    && let Some(t) = pb.imp().tracker.borrow_mut().as_mut()
+                {
+                    t.tick(p.position(), p.duration());
                 }
             }
         ));
@@ -658,6 +681,7 @@ impl Playback {
         let imp = self.imp();
         imp.generation.set(imp.generation.get() + 1);
         imp.queue_gen.set(imp.queue_gen.get() + 1);
+        self.stop_tracking();
         imp.player.stop();
         imp.recovery.cancel();
         imp.prepared.take();
@@ -858,6 +882,7 @@ impl Playback {
         imp.prepared.take();
         imp.player.set_next(None);
         imp.recovery.cancel();
+        self.stop_tracking();
         self.set_loading(true);
         // Don't let the previous song play on while this one resolves.
         if imp.player.state() != PlayState::Idle {
@@ -1017,6 +1042,9 @@ impl Playback {
     /// The player continued gaplessly into the prepared stream.
     fn on_advanced(&self, token: u64) {
         let imp = self.imp();
+        if let Some(mut t) = imp.tracker.take() {
+            t.finish();
+        }
         let prepared = imp.prepared.take();
         let Some((t, id)) = prepared.filter(|(t, _)| *t == token) else {
             log::warn!("gapless switch to an unexpected stream; reloading");
@@ -1046,7 +1074,7 @@ impl Playback {
         if let Some(t) = self.current_track() {
             imp.counted.set(true);
             Library::get().add_history(&t);
-            self.report_play(&t.video_id);
+            self.start_tracking(&t.video_id);
         }
         self.save_session();
         self.prepare_next();
@@ -1081,24 +1109,30 @@ impl Playback {
         self.prepare_next();
     }
 
-    /// Add a play to the account's YouTube history.
-    fn report_play(&self, video_id: &str) {
+    /// Report the play to the account's YouTube history, and the time
+    /// played as it goes.
+    fn start_tracking(&self, video_id: &str) {
+        let imp = self.imp();
+        imp.tracker.take();
         if !api::client().is_signed_in() || !settings::get().send_history {
             return;
         }
-        let Some(url) = extractor()
-            .cached(video_id, &extractor::request())
-            .and_then(|i| i.tracking.clone())
-            .and_then(|t| t.playback)
-        else {
+        let Some(tracking) = extractor().cached(video_id, &extractor::request()).and_then(|i| i.tracking.clone()) else {
             log::debug!("no tracking URL for {video_id}; not added to history");
             return;
         };
-        runtime::spawn(async move {
-            if let Err(e) = api::client().report_play(&url).await {
-                log::warn!("adding the play to history failed: {e:#}");
-            }
-        });
+        let p = &imp.player;
+        let mut tracker = Tracker::new(api::client(), &tracking, p.position()).naming_client();
+        tracker.tick(p.position(), p.duration());
+        imp.tracker.replace(Some(tracker));
+    }
+
+    /// The current track stops (skipped, or the queue ends): report the time played.
+    fn stop_tracking(&self) {
+        let p = &self.imp().player;
+        if let Some(mut t) = self.imp().tracker.take() {
+            t.flush(p.position(), p.duration());
+        }
     }
 
     // -----------------------------------------------------------------------

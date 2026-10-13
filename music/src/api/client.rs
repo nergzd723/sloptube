@@ -164,20 +164,6 @@ impl Client {
         self.post(endpoint, json!({ "channelIds": [channel_id] })).await.map(drop)
     }
 
-    /// Report a play to the account's history (the player response's tracking URL).
-    pub async fn report_play(&self, tracking_url: &str) -> Result<()> {
-        const CPN_CHARS: &[u8] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_";
-        let cpn: String = (0..16)
-            .map(|_| CPN_CHARS[rand::random_range(0..CPN_CHARS.len())] as char)
-            .collect();
-        let mut url = url::Url::parse(tracking_url)?;
-        url.query_pairs_mut()
-            .append_pair("ver", "2")
-            .append_pair("c", "WEB_REMIX")
-            .append_pair("cpn", &cpn);
-        self.ping(url).await
-    }
-
     pub async fn lyrics(&self, browse_id: &str) -> Result<Option<Lyrics>> {
         let v = self.browse(browse_id, None).await?;
         Ok(parse::parse_lyrics(&v))

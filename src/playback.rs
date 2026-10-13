@@ -1,10 +1,9 @@
 //! Playback controller: what's playing, its metadata, the queue and stream selection.
 
 use std::cell::{Cell, RefCell};
-use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Instant;
 
+use common::history::Tracker;
 use common::recovery::Recovery;
 use gtk::glib::subclass::Signal;
 use gtk::glib;
@@ -26,15 +25,6 @@ pub struct Queue {
     pub title: String,
     pub items: Vec<VideoItem>,
     pub index: usize,
-}
-
-struct Tracking {
-    playback_url: Option<String>,
-    watchtime_url: Option<String>,
-    cpn: String,
-    sent_playback: bool,
-    segment_start: f64,
-    last_ping: Instant,
 }
 
 // ---------------------------------------------------------------------------
@@ -123,7 +113,7 @@ mod imp {
         pub queue: RefCell<Option<Queue>>,
         pub generation: Cell<u64>,
         pub support: RefCell<Option<DecoderSupport>>,
-        pub tracking: RefCell<Option<Tracking>>,
+        pub tracking: RefCell<Option<Tracker>>,
         pub last_saved: Cell<f64>,
         pub recovery: Recovery,
         pub played: RefCell<Vec<String>>,
@@ -808,18 +798,8 @@ impl Playback {
             return;
         }
         let Some(t) = info.tracking.as_ref() else { return };
-        const ALPHABET: &[u8] = b"abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_";
-        let cpn: String = (0..16)
-            .map(|_| ALPHABET[rand::random::<u8>() as usize & 63] as char)
-            .collect();
-        self.imp().tracking.replace(Some(Tracking {
-            playback_url: t.playback.clone(),
-            watchtime_url: t.watchtime.clone(),
-            cpn,
-            sent_playback: false,
-            segment_start: self.imp().player.position(),
-            last_ping: Instant::now(),
-        }));
+        let tracker = Tracker::new(api::client(), t, self.imp().player.position());
+        self.imp().tracking.replace(Some(tracker));
     }
 
     fn on_tick(&self) {
@@ -835,27 +815,8 @@ impl Playback {
                 save_position(&item.id, pos, player.duration());
             }
         }
-        let mut ping: Option<String> = None;
         if let Some(t) = imp.tracking.borrow_mut().as_mut() {
-            if !t.sent_playback {
-                t.sent_playback = true;
-                t.segment_start = pos;
-                t.last_ping = Instant::now();
-                ping = t
-                    .playback_url
-                    .as_deref()
-                    .map(|u| stats_url(u, &t.cpn, pos, None, player.duration()));
-            } else if t.last_ping.elapsed().as_secs() >= 30 {
-                ping = t
-                    .watchtime_url
-                    .as_deref()
-                    .map(|u| stats_url(u, &t.cpn, pos, Some((t.segment_start, pos)), player.duration()));
-                t.segment_start = pos;
-                t.last_ping = Instant::now();
-            }
-        }
-        if let Some(url) = ping {
-            send_ping(url);
+            t.tick(pos, player.duration());
         }
     }
 
@@ -870,62 +831,8 @@ impl Playback {
         } else if player.duration() > 0.0 {
             save_position(&item.id, pos, player.duration());
         }
-        let mut ping = None;
         if let Some(t) = imp.tracking.borrow_mut().as_mut() {
-            if t.sent_playback && pos > t.segment_start {
-                ping = t
-                    .watchtime_url
-                    .as_deref()
-                    .map(|u| stats_url(u, &t.cpn, pos, Some((t.segment_start, pos)), player.duration()));
-                t.segment_start = pos;
-                t.last_ping = Instant::now();
-            }
-        }
-        if let Some(url) = ping {
-            send_ping(url);
+            t.flush(pos, player.duration());
         }
     }
-}
-
-fn stats_url(base: &str, cpn: &str, cmt: f64, segment: Option<(f64, f64)>, len: f64) -> String {
-    let Ok(mut url) = url::Url::parse(base) else {
-        return base.to_owned();
-    };
-    let mut set: HashMap<&str, String> = HashMap::new();
-    set.insert("ver", "2".into());
-    set.insert("cpn", cpn.to_owned());
-    set.insert("cmt", format!("{cmt:.3}"));
-    set.insert("el", "detailpage".into());
-    if len > 0.0 {
-        set.insert("len", format!("{len:.3}"));
-    }
-    if let Some((st, et)) = segment {
-        set.insert("st", format!("{st:.3}"));
-        set.insert("et", format!("{et:.3}"));
-        set.insert("state", "playing".into());
-    }
-    let kept: Vec<(String, String)> = url
-        .query_pairs()
-        .filter(|(k, _)| !set.contains_key(k.as_ref()))
-        .map(|(k, v)| (k.into_owned(), v.into_owned()))
-        .collect();
-    {
-        let mut q = url.query_pairs_mut();
-        q.clear();
-        for (k, v) in &kept {
-            q.append_pair(k, v);
-        }
-        for (k, v) in &set {
-            q.append_pair(k, v);
-        }
-    }
-    url.to_string()
-}
-
-fn send_ping(url: String) {
-    runtime::spawn(async move {
-        if let Err(e) = api::client().stats_ping(&url).await {
-            log::debug!("watch history ping failed: {e:#}");
-        }
-    });
 }
