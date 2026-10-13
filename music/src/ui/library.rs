@@ -41,7 +41,11 @@ fn shortcut(icon: &str, title: &str, nav: Nav) -> gtk::Button {
     content.append(&i);
     content.append(&l);
     b.set_child(Some(&content));
-    b.connect_clicked(move |b| navigate(b, nav.clone()));
+    b.connect_clicked(move |b| {
+        if !common::touch::press_stopped_scrolling(b) {
+            navigate(b, nav.clone());
+        }
+    });
     b
 }
 

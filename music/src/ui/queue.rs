@@ -1,6 +1,7 @@
 //! Up next: the playback queue.
 
 use adw::prelude::*;
+use common::touch;
 use gtk::glib;
 
 use super::cards::{ListRow, RowStyle};
@@ -69,7 +70,11 @@ pub fn queue_view() -> QueueView {
     list.set_single_click_activate(true);
     list.add_css_class("row-list");
     list.add_css_class("queue-list");
-    list.connect_activate(|_, pos| Playback::get().play_index(pos));
+    list.connect_activate(|list, pos| {
+        if !touch::press_stopped_scrolling(list) {
+            Playback::get().play_index(pos);
+        }
+    });
     let sw = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&list)

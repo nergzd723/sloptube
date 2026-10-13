@@ -12,6 +12,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::touch;
 use gtk::{gio, glib};
 
 use super::actions;
@@ -338,6 +339,10 @@ impl RowList {
         list.set_single_click_activate(true);
         list.add_css_class("row-list");
         list.connect_activate(|list, pos| {
+            // A tap that only stopped the list gliding doesn't play or open anything.
+            if touch::press_stopped_scrolling(list) {
+                return;
+            }
             let Some(obj) = list.model().and_then(|m| m.item(pos)).and_downcast::<glib::BoxedAnyObject>() else {
                 return;
             };
@@ -352,6 +357,7 @@ impl RowList {
             }
         });
         imp.scrolled.set_child(Some(&list));
+        touch::track_scrolling(&imp.scrolled);
         imp.scrolled.set_hscrollbar_policy(gtk::PolicyType::Never);
         imp.scrolled.set_vexpand(true);
         let adj = imp.scrolled.vadjustment();

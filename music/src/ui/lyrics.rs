@@ -5,6 +5,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::touch;
 use gtk::glib;
 
 use super::browse::shelves_to_rows;
@@ -58,6 +59,7 @@ impl LyricsView {
         imp.text.set_xalign(0.0);
         imp.text.set_selectable(true);
         imp.text.add_css_class("lyrics");
+        touch::route_label_touch(&imp.text, |_, _, _| {});
         imp.source.set_xalign(0.0);
         imp.source.add_css_class("dimmed");
         imp.source.add_css_class("caption");

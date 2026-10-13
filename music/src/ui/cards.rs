@@ -8,6 +8,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::touch;
 use gtk::{gio, glib};
 
 use super::actions;
@@ -76,6 +77,9 @@ impl TileCard {
             #[weak(rename_to = tile)]
             self,
             move |_| {
+                if touch::press_stopped_scrolling(&tile) {
+                    return;
+                }
                 match tile.item() {
                     Some(Item::Card(c)) => actions::play_card(&c, false),
                     Some(Item::Track(t)) => Playback::get().play_song(t),
@@ -107,6 +111,9 @@ impl TileCard {
         imp.art.replace(Some(art));
 
         self.connect_clicked(|tile| {
+            if touch::press_stopped_scrolling(tile) {
+                return;
+            }
             if let Some(item) = tile.item() {
                 actions::activate(tile, &item);
             }
@@ -352,6 +359,9 @@ impl ListRow {
                     if x < 0.0 || y < 0.0 || x > row.width() as f64 || y > row.height() as f64 {
                         return;
                     }
+                    if touch::press_stopped_scrolling(&row) {
+                        return;
+                    }
                     // Not when the menu button was hit.
                     if let Some(w) = row.pick(x, y, gtk::PickFlags::DEFAULT)
                         && (w.is_ancestor(&row.imp().menu) || w == *row.imp().menu.upcast_ref::<gtk::Widget>()) {
@@ -545,6 +555,9 @@ impl MoodButton {
         b.append(&imp.label);
         obj.set_child(Some(&b));
         obj.connect_clicked(|btn| {
+            if touch::press_stopped_scrolling(btn) {
+                return;
+            }
             if let Some(m) = btn.imp().mood.borrow().clone() {
                 super::navigate(btn, super::Nav::Page(m.target, m.title));
             }

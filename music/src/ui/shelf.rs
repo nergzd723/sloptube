@@ -9,6 +9,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::touch;
 use gtk::glib;
 
 use super::cards::{ListRow, MoodButton, RowStyle, TileCard};
@@ -99,6 +100,7 @@ fn hscroller(child: &impl IsA<gtk::Widget>) -> gtk::ScrolledWindow {
         .child(child)
         .build();
     sw.add_css_class("shelf-scroller");
+    touch::track_scrolling(&sw);
     sw
 }
 
@@ -460,6 +462,7 @@ impl ShelfView {
                 l.set_xalign(0.0);
                 l.set_selectable(true);
                 l.add_css_class("shelf-text");
+                touch::route_label_touch(&l, |_, _, _| {});
                 let t = gtk::Button::with_label("Show more");
                 t.add_css_class("flat");
                 t.set_halign(gtk::Align::Start);

@@ -9,3 +9,4 @@ pub mod memory;
 pub mod paths;
 pub mod prefs;
 pub mod runtime;
+pub mod touch;

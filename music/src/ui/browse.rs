@@ -6,6 +6,7 @@ use std::rc::Rc;
 
 use adw::prelude::*;
 use adw::subclass::prelude::*;
+use common::touch;
 use gtk::{gio, glib};
 
 use super::cards::{RowStyle, TileCard};
@@ -93,6 +94,7 @@ impl ChipBar {
             .vscrollbar_policy(gtk::PolicyType::Never)
             .child(&imp.row)
             .build();
+        touch::track_scrolling(&sw);
         obj.set_child(Some(&sw));
         obj
     }
@@ -166,11 +168,13 @@ pub fn tile_grid(items: Vec<Item>) -> gtk::ScrolledWindow {
     grid.set_min_columns(2);
     grid.set_max_columns(10);
     grid.add_css_class("tile-gridview");
-    gtk::ScrolledWindow::builder()
+    let sw = gtk::ScrolledWindow::builder()
         .hscrollbar_policy(gtk::PolicyType::Never)
         .child(&grid)
         .vexpand(true)
-        .build()
+        .build();
+    touch::track_scrolling(&sw);
+    sw
 }
 
 // ---------------------------------------------------------------------------
