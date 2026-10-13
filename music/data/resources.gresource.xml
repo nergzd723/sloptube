@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<gresources>
+  <gresource prefix="/io/github/nergzd/SlopTubeMusic">
+    <file>style.css</file>
+    <file>icons/scalable/apps/io.github.nergzd.SlopTubeMusic.svg</file>
+    <file>icons/scalable/apps/io.github.nergzd.SlopTubeMusic-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-explore-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-home-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-library-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-lyrics-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-playing-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-queue-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-radio-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-saved-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-save-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-thumbs-down-symbolic.svg</file>
+    <file>icons/scalable/actions/stm-thumbs-up-symbolic.svg</file>
+  </gresource>
+</gresources>

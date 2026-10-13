@@ -1,0 +1,168 @@
+//! `--selftest`: exercise the network layer against YouTube Music without a window.
+
+use anyhow::{Context, Result};
+
+use crate::api::{self, Item, ShelfKind, WatchTarget};
+use crate::extractor::extractor;
+use crate::settings::AudioQuality;
+
+fn rss() -> String {
+    crate::memory::rss_mb()
+        .map(|(t, a, f)| format!("rss {t} MB (anon {a}, file {f})"))
+        .unwrap_or_default()
+}
+
+pub async fn run() -> Result<()> {
+    let c = api::client();
+    let _ = c.refresh_client_version().await;
+
+    let home = c.browse_page("FEmusic_home", None).await.context("home")?;
+    println!(
+        "home: {} shelves, {} chips, continuation {}",
+        home.shelves.len(),
+        home.chips.len(),
+        home.continuation.is_some()
+    );
+    for s in home.shelves.iter().take(4) {
+        println!("  [{:?}] {} ({} items)", s.kind, s.title, s.items.len());
+    }
+    if let Some(t) = &home.continuation {
+        let more = c.browse_more(t).await.context("home continuation")?;
+        println!("home continuation: {} shelves", more.shelves.len());
+    }
+    if let Some(chip) = home.chips.first() {
+        let page = c.browse_page("FEmusic_home", chip.params.as_deref()).await.context("home chip")?;
+        println!("home chip {:?}: {} shelves", chip.title, page.shelves.len());
+    }
+    let explore = c.browse_page("FEmusic_explore", None).await.context("explore")?;
+    println!("explore: {} shelves", explore.shelves.len());
+
+    let search = c.search("daft punk", None).await.context("search")?;
+    println!("search: {} shelves, chips {:?}", search.shelves.len(), search.chips.iter().map(|c| &c.title).collect::<Vec<_>>());
+    let songs_chip = search.chips.iter().find(|c| c.title == "Songs").and_then(|c| c.params.clone());
+    let songs = c.search("daft punk", songs_chip.as_deref()).await.context("song search")?;
+    let list = songs.shelves.iter().find(|s| s.kind == ShelfKind::List);
+    println!(
+        "songs: {} results, continuation {}",
+        list.map(|s| s.items.len()).unwrap_or(0),
+        list.and_then(|s| s.continuation.as_ref()).is_some()
+    );
+    if let Some(t) = list.and_then(|s| s.continuation.clone()) {
+        let (items, _) = c.search_more(&t).await.context("search continuation")?;
+        println!("songs continuation: {} results", items.len());
+    }
+    let sugg = c.suggestions("daft p").await.context("suggestions")?;
+    println!("suggestions: {:?} + {} items", sugg.queries.iter().take(3).collect::<Vec<_>>(), sugg.items.len());
+
+    let album = c.collection("MPREb_K8qWMWVqXGi").await.context("album")?;
+    println!("album: {} — {} tracks, playlist {:?}", album.title, album.tracks.len(), album.playlist_id);
+    let artist = c.artist("UC_kRDKYrUlrbtrSiyu5Tflg").await.context("artist")?;
+    println!("artist: {} — {} shelves", artist.name, artist.shelves.len());
+    let playlist = c
+        .collection("VLRDCLAK5uy_n20FRYQXNt1p1wS55Nj2r14IouO5weaYU")
+        .await
+        .context("playlist")?;
+    println!("playlist: {} — {} tracks", playlist.title, playlist.tracks.len());
+
+    let first_song = songs
+        .shelves
+        .iter()
+        .flat_map(|s| &s.items)
+        .find_map(|i| match i {
+            Item::Track(t) => Some(t.clone()),
+            _ => None,
+        })
+        .context("no song found")?;
+    let q = c
+        .queue(&WatchTarget {
+            video_id: Some(first_song.video_id.clone()),
+            ..Default::default()
+        })
+        .await
+        .context("radio")?;
+    println!(
+        "radio for {:?}: {} tracks, lyrics {:?}, related {:?}",
+        first_song.title,
+        q.tracks.len(),
+        q.lyrics,
+        q.related
+    );
+    if let Some(t) = &q.continuation {
+        let more = c.queue_more(t).await.context("radio continuation")?;
+        println!("radio continuation: {} tracks", more.tracks.len());
+    }
+    if let Some(l) = &q.lyrics {
+        let lyrics = c.lyrics(l).await.context("lyrics")?;
+        println!("lyrics: {} lines", lyrics.map(|l| l.text.lines().count()).unwrap_or(0));
+    }
+    if let Some(r) = &q.related {
+        let related = c.browse_page(r, None).await.context("related")?;
+        println!("related: {} shelves", related.shelves.len());
+    }
+    println!("{}", rss());
+
+    for label in ["cold", "warm"] {
+        let started = std::time::Instant::now();
+        extractor().invalidate(&first_song.video_id);
+        let info = extractor().extract(&first_song.video_id).await.context("extraction")?;
+        let f = info.select(AudioQuality::High).context("no audio stream")?;
+        println!(
+            "extraction ({label}): {:.2}s, {} formats, picked {}",
+            started.elapsed().as_secs_f64(),
+            info.formats.len(),
+            f.describe()
+        );
+    }
+    println!("{}", rss());
+    account().await
+}
+
+/// With a stored session: who is signed in, and how much each library section returns.
+async fn account() -> Result<()> {
+    if !crate::settings::get().has_session && !crate::auth::fallback_exists() {
+        println!("account: not signed in (sign in in the app to check the library)");
+        return Ok(());
+    }
+    let Some(session) = crate::auth::load().await.filter(crate::auth::Session::is_signed_in) else {
+        println!("account: no usable stored session");
+        return Ok(());
+    };
+    let c = api::client();
+    c.set_session(Some(session));
+    let info = c.account_info().await.context("account menu")?;
+    match info {
+        Some(a) => println!("account: signed in as {} {}", a.name, a.handle.unwrap_or_default()),
+        None => {
+            println!("account: YouTube says this session is signed out");
+            return Ok(());
+        }
+    }
+    let home = c.browse_page("FEmusic_home", None).await.context("home (signed in)")?;
+    println!("home (signed in): {} shelves", home.shelves.len());
+    for (name, id) in [
+        ("playlists", "FEmusic_liked_playlists"),
+        ("songs", "FEmusic_liked_videos"),
+        ("albums", "FEmusic_liked_albums"),
+        ("artists", "FEmusic_library_corpus_track_artists"),
+        ("subscriptions", "FEmusic_library_corpus_artists"),
+        ("history", "FEmusic_history"),
+    ] {
+        match c.browse_page(id, None).await {
+            Ok(p) => println!(
+                "library {name}: {} shelves, {} items",
+                p.shelves.len(),
+                p.shelves.iter().map(|s| s.items.len()).sum::<usize>()
+            ),
+            Err(e) => println!("library {name}: failed: {e:#}"),
+        }
+    }
+    match c.collection("VLLM").await {
+        Ok(p) => println!(
+            "liked music: {} tracks, {} rated as liked",
+            p.tracks.len(),
+            p.tracks.iter().filter(|t| t.liked == Some(true)).count()
+        ),
+        Err(e) => println!("liked music: failed: {e:#}"),
+    }
+    Ok(())
+}
