@@ -56,6 +56,7 @@ mod imp {
         pub root_feeds: RefCell<Vec<(String, FeedView)>>,
         pub inhibit: Cell<u32>,
         pub syncing_sidebar: Cell<bool>,
+        pub refocus_queued: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -373,6 +374,26 @@ impl Window {
             if let Some(s) = win.imp().sheet.borrow().as_ref() {
                 s.set_locked(fs);
             }
+        });
+        // Keep keyboard focus in the player while it covers the window. Crossing a
+        // breakpoint (Super+F fullscreen, or a resize) hides the content for a frame;
+        // GTK moves focus away and libadwaita replays that as Tab presses on the next
+        // frame, which end up on a sidebar row or header button behind the sheet.
+        // Check once that replay has run.
+        self.connect_focus_widget_notify(|win| {
+            if !win.imp().expanded.get() || win.imp().refocus_queued.replace(true) {
+                return;
+            }
+            win.add_tick_callback(|win, _| {
+                let win = win.downgrade();
+                glib::idle_add_local_once(move || {
+                    if let Some(win) = win.upgrade() {
+                        win.imp().refocus_queued.set(false);
+                        win.keep_focus_in_player();
+                    }
+                });
+                glib::ControlFlow::Break
+            });
         });
 
         // Sidebar subscriptions follow the account.
@@ -756,6 +777,23 @@ impl Window {
             }
         } else if !imp.playback.active() {
             imp.mini_revealer.set_reveal_child(false);
+        }
+    }
+
+    fn keep_focus_in_player(&self) {
+        let imp = self.imp();
+        let (Some(sheet), Some(watch)) = (imp.sheet.borrow().clone(), imp.watch.borrow().clone()) else { return };
+        if !imp.expanded.get() {
+            return;
+        }
+        // Dialogs and menus may take focus from the player.
+        let lost = GtkWindowExt::focus(self).is_none_or(|f| {
+            !f.is_ancestor(&sheet)
+                && f.ancestor(adw::Dialog::static_type()).is_none()
+                && f.ancestor(gtk::Popover::static_type()).is_none()
+        });
+        if lost {
+            watch.player_view().grab_player_focus();
         }
     }
 

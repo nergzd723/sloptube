@@ -472,6 +472,13 @@ page).
   `AdwSpringAnimation` (damping ratio 0.92, mass 1, stiffness 520) starting
   from the finger's velocity.
 - The sheet is locked in fullscreen.
+- While the sheet is open, keyboard focus stays in the player
+  (`Window::keep_focus_in_player`). Crossing a breakpoint (the window manager's
+  fullscreen, or a resize) hides the `AdwBreakpointBin` content for a frame. GTK
+  moves focus away, and libadwaita replays those moves as Tab presses on the next
+  frame, which end on a sidebar row or header button behind the sheet. Once
+  that has run, focus left outside the sheet (but not in a dialog or popover)
+  goes back to the player.
 
 ### Sizing pitfalls (`ui/aspect.rs`, `ui/mini_player.rs`)
 
