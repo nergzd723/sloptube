@@ -10,7 +10,7 @@ use gtk::{gio, glib};
 
 use super::cards::{RowStyle, TileCard};
 use super::rows::{Loader, Row, RowList, TrackCtx};
-use super::shelf::TILE;
+use super::shelf::{TILE, tile_size};
 use crate::api::{self, BrowseTarget, Chip, Item, Shelf, ShelfKind};
 use crate::runtime;
 
@@ -142,6 +142,7 @@ impl ChipBar {
 
 /// A virtualised grid of tiles (new releases, discographies).
 pub fn tile_grid(items: Vec<Item>) -> gtk::ScrolledWindow {
+    let size = tile_size(&items);
     let model = gio::ListStore::new::<glib::BoxedAnyObject>();
     let objs: Vec<glib::BoxedAnyObject> = items.into_iter().map(glib::BoxedAnyObject::new).collect();
     model.extend_from_slice(&objs);
@@ -152,13 +153,13 @@ pub fn tile_grid(items: Vec<Item>) -> gtk::ScrolledWindow {
         li.set_activatable(false);
         li.set_selectable(false);
     });
-    factory.connect_bind(|_, obj| {
+    factory.connect_bind(move |_, obj| {
         let li = obj.downcast_ref::<gtk::ListItem>().unwrap();
         if let (Some(tile), Some(item)) = (
             li.child().and_downcast::<TileCard>(),
             li.item().and_downcast::<glib::BoxedAnyObject>(),
         ) {
-            tile.bind(&item.borrow::<Item>(), TILE);
+            tile.bind(&item.borrow::<Item>(), size);
         }
     });
     let grid = gtk::GridView::new(Some(gtk::NoSelection::new(Some(model))), Some(factory));

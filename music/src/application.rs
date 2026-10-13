@@ -52,6 +52,7 @@ mod imp {
                 }
             });
             crate::account::Account::get().load_stored();
+            crate::image::warm_up_connections();
             // Restored paused: nothing is fetched and yt-dlp isn't started until play is pressed.
             Playback::get().restore_session();
         }

@@ -4,6 +4,10 @@
 //! rounded corners, at a fixed size (or as the largest centred square that
 //! fits). That is cheaper than a picture inside a clipping container and
 //! never lets the texture's own size leak into the layout.
+//!
+//! Artwork loads lazily: only once the view is on screen or within half a
+//! screen of it. Lists keep many rows around, and carousels have tiles far to
+//! the side; loading all of them at once delayed the visible ones by seconds.
 
 use std::cell::{Cell, RefCell};
 
@@ -11,7 +15,7 @@ use adw::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::{gdk, glib, graphene, gsk};
 
-use crate::api::Thumbnail;
+use crate::api::{self, Thumbnail};
 use crate::image::{self, ArtTarget};
 
 mod imp {
@@ -30,6 +34,12 @@ mod imp {
         pub round: Cell<bool>,
         /// Draw a soft drop shadow around the artwork.
         pub shadow: Cell<bool>,
+        /// Load at once instead of when scrolled into view.
+        pub eager: Cell<bool>,
+        /// (url, width) to load once visible.
+        pub pending: RefCell<Option<(String, u32)>>,
+        /// In the lazy-loading queue.
+        pub queued: Cell<bool>,
     }
 
     #[glib::object_subclass]
@@ -46,6 +56,13 @@ mod imp {
     impl ObjectImpl for ArtView {}
 
     impl WidgetImpl for ArtView {
+        fn map(&self) {
+            self.parent_map();
+            if self.pending.borrow().is_some() {
+                super::lazy::schedule();
+            }
+        }
+
         fn measure(&self, orientation: gtk::Orientation, _for_size: i32) -> (i32, i32, i32, i32) {
             let (w, h) = self.size.get();
             let banner = self.banner.get();
@@ -165,17 +182,150 @@ impl ArtView {
         self.imp().texture.borrow().clone()
     }
 
-    /// Load artwork for the widget's size.
+    /// Always load right away (Now playing, the player bar, page headers).
+    pub fn set_eager(&self, eager: bool) {
+        self.imp().eager.set(eager);
+    }
+
+    /// Show artwork for the widget's size: at once if it's in memory or the
+    /// view is eager, otherwise once it scrolls into view.
     pub fn set_thumbnails(&self, thumbs: &[Thumbnail]) {
-        let (w, h) = self.imp().size.get();
-        let size = if self.imp().banner.get() > 0 {
-            1080
+        let imp = self.imp();
+        let (w, h) = imp.size.get();
+        let (w, h) = if imp.banner.get() > 0 {
+            (1080, 0)
         } else if w > 0 {
-            w.max(h)
+            (w, h)
         } else {
-            self.imp().natural.get()
+            (imp.natural.get(), imp.natural.get())
         };
-        image::set_art(self, thumbs, size.max(1) as u32);
+        // Wide enough to cover the frame's height too (cover-cropping a 16:9
+        // video thumbnail into a square must not upscale it).
+        let aspect = thumbs
+            .iter()
+            .max_by_key(|t| t.width)
+            .filter(|t| t.height > 0)
+            .map(|t| t.width as f32 / t.height as f32)
+            .unwrap_or(1.0);
+        let needed = (w as f32).max(h as f32 * aspect).ceil().max(1.0) as u32;
+        let width = image::bucket(needed * self.scale_factor().max(1) as u32);
+        let Some(url) = api::thumb_url(thumbs, width) else {
+            imp.pending.replace(None);
+            image::set_url(self, None, 0);
+            return;
+        };
+        if imp.eager.get() || image::cached_texture(&url, width).is_some() {
+            imp.pending.replace(None);
+            image::set_url(self, Some(&url), width);
+        } else if image::is_wanted(self, &url, width) {
+            // Already showing or loading this one.
+            imp.pending.replace(None);
+        } else {
+            // Forget the previous image (and any load still running for it).
+            image::set_url(self, None, 0);
+            imp.pending.replace(Some((url, width)));
+            lazy::queue(self);
+        }
+    }
+
+    fn load_pending(&self) {
+        if let Some((url, width)) = self.imp().pending.take() {
+            image::set_url(self, Some(&url), width);
+        }
+    }
+}
+
+/// The lazy-loading queue: views waiting to be scrolled into view.
+mod lazy {
+    use super::*;
+
+    thread_local! {
+        static QUEUE: RefCell<Vec<glib::WeakRef<ArtView>>> = const { RefCell::new(Vec::new()) };
+        static SCHEDULED: Cell<bool> = const { Cell::new(false) };
+    }
+
+    const WATCHED: &str = "stmusic-lazy-watched";
+
+    pub fn queue(view: &ArtView) {
+        if !view.imp().queued.replace(true) {
+            QUEUE.with(|q| q.borrow_mut().push(view.downgrade()));
+        }
+        schedule();
+    }
+
+    /// Check the queue soon (after the current layout); calls coalesce.
+    pub fn schedule() {
+        if SCHEDULED.with(|s| s.replace(true)) {
+            return;
+        }
+        glib::timeout_add_local_once(std::time::Duration::from_millis(30), || {
+            SCHEDULED.with(|s| s.set(false));
+            run();
+        });
+    }
+
+    fn run() {
+        let views: Vec<glib::WeakRef<ArtView>> = QUEUE.with(|q| std::mem::take(&mut *q.borrow_mut()));
+        let mut keep = Vec::with_capacity(views.len());
+        for weak in views {
+            let Some(view) = weak.upgrade() else { continue };
+            if view.imp().pending.borrow().is_none() {
+                view.imp().queued.set(false);
+                continue;
+            }
+            if near_viewport(&view) {
+                view.imp().queued.set(false);
+                view.load_pending();
+            } else {
+                keep.push(weak);
+            }
+        }
+        QUEUE.with(|q| q.borrow_mut().extend(keep));
+    }
+
+    /// On screen, or within half a screen of it, inside every scrolled window
+    /// around it. Scrolled windows found on the way get watched, so scrolling
+    /// them checks the queue again.
+    fn near_viewport(view: &ArtView) -> bool {
+        if !view.is_mapped() || view.width() <= 0 {
+            return false;
+        }
+        let Some(root) = view.root() else { return false };
+        let root = root.upcast_ref::<gtk::Widget>();
+        let Some(b) = view.compute_bounds(root) else { return false };
+        let grown = |r: graphene::Rect| {
+            let (mx, my) = (r.width() * 0.5, r.height() * 0.5);
+            graphene::Rect::new(r.x() - mx, r.y() - my, r.width() + 2.0 * mx, r.height() + 2.0 * my)
+        };
+        let window = graphene::Rect::new(0.0, 0.0, root.width() as f32, root.height() as f32);
+        if b.intersection(&grown(window)).is_none() {
+            return false;
+        }
+        let mut ancestor = view.parent();
+        while let Some(a) = ancestor {
+            if let Some(sw) = a.downcast_ref::<gtk::ScrolledWindow>() {
+                watch(sw);
+                if let Some(r) = sw.compute_bounds(root) {
+                    if b.intersection(&grown(r)).is_none() {
+                        return false;
+                    }
+                }
+            }
+            ancestor = a.parent();
+        }
+        true
+    }
+
+    fn watch(sw: &gtk::ScrolledWindow) {
+        // SAFETY: the key only ever holds a bool.
+        if unsafe { sw.data::<bool>(WATCHED).is_some() } {
+            return;
+        }
+        unsafe { sw.set_data(WATCHED, true) };
+        for adj in [sw.hadjustment(), sw.vadjustment()] {
+            adj.connect_value_changed(|_| schedule());
+            adj.connect_changed(|_| schedule());
+        }
     }
 }
 

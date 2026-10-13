@@ -123,9 +123,11 @@ impl TileCard {
         self.imp().item.borrow().clone()
     }
 
-    pub fn bind(&self, item: &Item, width: i32) {
+    /// Bind an item; `size` is the artwork's (width, height), the same for a whole shelf.
+    pub fn bind(&self, item: &Item, size: (i32, i32)) {
         let imp = self.imp();
         let art = imp.art.borrow().clone().unwrap();
+        let (width, height) = size;
         imp.item.replace(Some(item.clone()));
         let center = |c: bool| {
             for l in [&imp.title, &imp.subtitle] {
@@ -135,8 +137,7 @@ impl TileCard {
         };
         match item {
             Item::Track(t) => {
-                let h = if t.is_video { width * 9 / 16 } else { width };
-                art.set_fixed_size(width, h);
+                art.set_fixed_size(width, height);
                 art.set_round(false);
                 art.set_thumbnails(&t.thumbnails);
                 imp.title.set_text(&t.title);
@@ -149,8 +150,8 @@ impl TileCard {
                 center(false);
             }
             Item::Card(c) => {
-                art.set_fixed_size(width, width);
-                art.set_round(c.kind.round());
+                art.set_fixed_size(width, height);
+                art.set_round(c.kind.round() && width == height);
                 art.set_thumbnails(&c.thumbnails);
                 imp.title.set_text(&c.title);
                 imp.subtitle.set_text(&c.subtitle);

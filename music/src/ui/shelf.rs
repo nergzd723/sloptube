@@ -16,6 +16,19 @@ use super::{Nav, actions, navigate};
 use crate::api::{Item, Shelf, ShelfKind};
 
 pub const TILE: i32 = 164;
+/// Tiles of shelves that only hold videos are 16:9.
+pub const WIDE_TILE: i32 = 272;
+
+/// One artwork size for every tile of a shelf: square (videos cropped), or
+/// 16:9 when everything is a video. Mixed sizes made carousels look ragged.
+pub fn tile_size(items: &[Item]) -> (i32, i32) {
+    let all_videos = !items.is_empty() && items.iter().all(|i| matches!(i, Item::Track(t) if t.is_video));
+    if all_videos {
+        (WIDE_TILE, WIDE_TILE * 9 / 16)
+    } else {
+        (TILE, TILE)
+    }
+}
 const COLUMN_WIDTH: i32 = 330;
 const COLUMN_ROWS: usize = 4;
 /// Long lists inside a shelf show this many items (the rest is behind "More").
@@ -239,6 +252,7 @@ impl ShelfView {
             pools.carousel = Some((sw, b));
         }
         let (sw, b) = pools.carousel.clone().unwrap();
+        let size = tile_size(&shelf.items);
         while pools.tiles.len() < shelf.items.len() {
             let t = TileCard::new(TILE);
             b.append(&t);
@@ -247,7 +261,7 @@ impl ShelfView {
         for (i, tile) in pools.tiles.iter().enumerate() {
             match shelf.items.get(i) {
                 Some(item) => {
-                    tile.bind(item, TILE);
+                    tile.bind(item, size);
                     tile.set_visible(true);
                 }
                 None => tile.set_visible(false),
@@ -366,6 +380,7 @@ impl ShelfView {
                 g
             })
             .clone();
+        let size = tile_size(&shelf.items);
         while pools.grid_tiles.len() < shelf.items.len() {
             let t = TileCard::new(TILE);
             grid.append(&t);
@@ -375,7 +390,7 @@ impl ShelfView {
             let child = tile.parent();
             match shelf.items.get(i) {
                 Some(item) => {
-                    tile.bind(item, TILE);
+                    tile.bind(item, size);
                     if let Some(c) = child { c.set_visible(true) }
                 }
                 None => {

@@ -69,6 +69,7 @@ impl ArtistView {
     fn build(&self) {
         let imp = self.imp();
         let banner = ArtView::new_banner(300);
+        banner.set_eager(true);
         banner.add_css_class("artist-banner");
         imp.header.set_child(Some(&banner));
         let fade = gtk::Box::new(gtk::Orientation::Vertical, 0);

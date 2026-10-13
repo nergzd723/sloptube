@@ -142,6 +142,7 @@ impl PlayerBar {
 
         // Mini player.
         let art = ArtView::new(44, 44, 4.0);
+        art.set_eager(true);
         art.set_valign(gtk::Align::Center);
         imp.mini_row.set_spacing(12);
         imp.mini_row.add_css_class("mini-row");
@@ -216,6 +217,7 @@ impl PlayerBar {
         let center = gtk::Box::new(gtk::Orientation::Horizontal, 12);
         center.add_css_class("bar-center");
         let art = ArtView::new(42, 42, 4.0);
+        art.set_eager(true);
         art.set_valign(gtk::Align::Center);
         center.append(&art);
         let info = texts(&imp.title, &imp.artist);

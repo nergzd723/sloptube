@@ -142,6 +142,7 @@ impl CollectionView {
     fn build(&self) {
         let imp = self.imp();
         let art = ArtView::new(232, 232, 10.0);
+        art.set_eager(true);
         art.add_css_class("collection-art");
         art.set_halign(gtk::Align::Center);
         imp.art.replace(Some(art.clone()));

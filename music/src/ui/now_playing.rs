@@ -153,6 +153,7 @@ impl NowPlayingView {
         let imp = self.imp();
         self.add_css_class("now-playing");
         let art = ArtView::new_fill(560, 10.0);
+        art.set_eager(true);
         art.add_css_class("np-art");
         art.set_shadow(true);
         art.set_vexpand(true);

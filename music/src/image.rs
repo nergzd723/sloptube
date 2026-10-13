@@ -7,6 +7,7 @@
 
 use std::cell::RefCell;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 use gtk::prelude::*;
 use gtk::{gdk, gdk_pixbuf, glib};
@@ -15,7 +16,11 @@ use tokio::sync::oneshot;
 use crate::api::{self, Thumbnail};
 use crate::runtime;
 
+/// Decoded textures (what's on screen and around it).
 const CACHE_BUDGET_BYTES: usize = 24 * 1024 * 1024;
+/// Compressed downloads: ~400 thumbnails, so scrolling back re-decodes (a few
+/// milliseconds) instead of downloading again (hundreds).
+const BYTES_BUDGET: usize = 8 * 1024 * 1024;
 
 struct Entry {
     texture: gdk::Texture,
@@ -30,9 +35,37 @@ struct Cache {
     clock: u64,
     inflight: HashMap<String, Vec<oneshot::Sender<Option<gdk::Texture>>>>,
     colors: HashMap<String, Option<gdk::RGBA>>,
+    /// url -> (JPEG bytes, last use)
+    bytes: HashMap<String, (Arc<Vec<u8>>, u64)>,
+    bytes_total: usize,
 }
 
 impl Cache {
+    fn get_bytes(&mut self, url: &str) -> Option<Arc<Vec<u8>>> {
+        self.clock += 1;
+        let clock = self.clock;
+        self.bytes.get_mut(url).map(|(b, t)| {
+            *t = clock;
+            b.clone()
+        })
+    }
+
+    fn insert_bytes(&mut self, url: String, data: Arc<Vec<u8>>) {
+        self.clock += 1;
+        self.bytes_total += data.len();
+        if let Some((old, _)) = self.bytes.insert(url, (data, self.clock)) {
+            self.bytes_total -= old.len();
+        }
+        while self.bytes_total > BYTES_BUDGET && self.bytes.len() > 1 {
+            let Some(oldest) = self.bytes.iter().min_by_key(|(_, (_, t))| *t).map(|(k, _)| k.clone()) else {
+                break;
+            };
+            if let Some((b, _)) = self.bytes.remove(&oldest) {
+                self.bytes_total -= b.len();
+            }
+        }
+    }
+
     fn get(&mut self, key: &str) -> Option<gdk::Texture> {
         self.clock += 1;
         let clock = self.clock;
@@ -90,20 +123,59 @@ fn decode(bytes: &[u8], max_width: u32) -> Option<gdk_pixbuf::Pixbuf> {
     loader.pixbuf().filter(|_| ok)
 }
 
-async fn fetch(url: String, max_width: u32) -> Option<gdk_pixbuf::Pixbuf> {
-    runtime::run(async move {
-        let resp = api::client::http().get(&url).send().await.ok()?;
-        if !resp.status().is_success() {
-            return None;
-        }
-        let bytes = resp.bytes().await.ok()?;
-        tokio::task::spawn_blocking(move || decode(&bytes, max_width).map(SendPixbuf))
+/// Download (unless `cached` has the bytes) and decode an image off the main thread.
+async fn fetch(
+    url: String,
+    max_width: u32,
+    cached: Option<Arc<Vec<u8>>>,
+) -> Option<(gdk_pixbuf::Pixbuf, Arc<Vec<u8>>)> {
+    let res = runtime::run(async move {
+        let started = std::time::Instant::now();
+        let from_cache = cached.is_some();
+        let data = match cached {
+            Some(d) => d,
+            None => {
+                let resp = api::client::http().get(&url).send().await.ok()?;
+                if !resp.status().is_success() {
+                    return None;
+                }
+                Arc::new(resp.bytes().await.ok()?.to_vec())
+            }
+        };
+        let fetched = started.elapsed();
+        let input = data.clone();
+        let pixbuf = tokio::task::spawn_blocking(move || decode(&input, max_width).map(SendPixbuf))
             .await
             .ok()
-            .flatten()
+            .flatten()?;
+        log::debug!(
+            "image {}: {} in {fetched:?}, decoded at {:?}, {} B",
+            url.split('/').nth(2).unwrap_or(""),
+            if from_cache { "cached" } else { "downloaded" },
+            started.elapsed(),
+            data.len()
+        );
+        Some((pixbuf, data))
     })
-    .await
-    .map(|p| p.0)
+    .await;
+    res.map(|(p, d)| (p.0, d))
+}
+
+/// Open connections to the artwork servers ahead of the first thumbnails, so
+/// they don't wait for TLS handshakes (connections stay pooled for a minute).
+pub fn warm_up_connections() {
+    runtime::spawn(async {
+        let hosts = [
+            "https://yt3.googleusercontent.com/",
+            "https://lh3.googleusercontent.com/",
+            "https://i.ytimg.com/",
+            "https://yt3.ggpht.com/",
+        ];
+        let requests = hosts.map(|h| api::client::http().head(h).send());
+        for r in requests {
+            let _ = r.await;
+        }
+    });
 }
 
 /// Pixbufs are plain pixel buffers; this lets one cross back from the decoder thread.
@@ -129,10 +201,15 @@ pub async fn load(url: &str, width: u32) -> Option<gdk::Texture> {
     });
     if first {
         let url = url.to_owned();
+        let cached = CACHE.with(|c| c.borrow_mut().get_bytes(&url));
         glib::spawn_future_local(async move {
-            let tex = fetch(url, width).await.map(|p| gdk::Texture::for_pixbuf(&p));
+            let res = fetch(url.clone(), width, cached).await;
+            let tex = res.as_ref().map(|(p, _)| gdk::Texture::for_pixbuf(p));
             CACHE.with(|c| {
                 let mut c = c.borrow_mut();
+                if let Some((_, data)) = res {
+                    c.insert_bytes(url, data);
+                }
                 if let Some(t) = &tex {
                     c.insert(key.clone(), t.clone());
                 }
@@ -164,6 +241,16 @@ fn wanted(obj: &impl IsA<glib::Object>) -> String {
     }
 }
 
+/// The decoded texture, if it's in memory already (no loading).
+pub fn cached_texture(url: &str, width: u32) -> Option<gdk::Texture> {
+    CACHE.with(|c| c.borrow_mut().get(&format!("{width}|{url}")))
+}
+
+/// Whether `target` already shows (or is loading) this image.
+pub fn is_wanted(target: &impl IsA<glib::Object>, url: &str, width: u32) -> bool {
+    wanted(target) == format!("{width}|{url}")
+}
+
 /// Something that can show a loaded texture.
 pub trait ArtTarget: IsA<glib::Object> + IsA<gtk::Widget> {
     fn show_texture(&self, texture: Option<&gdk::Texture>);
@@ -190,13 +277,7 @@ impl ArtTarget for adw::Avatar {
     }
 }
 
-/// Show artwork `size` logical pixels wide. Late results for recycled widgets are ignored.
-pub fn set_art<T: ArtTarget>(target: &T, thumbs: &[Thumbnail], size: u32) {
-    let width = bucket(size * target.scale_factor().max(1) as u32);
-    let url = api::thumb_url(thumbs, width);
-    set_url(target, url.as_deref(), width);
-}
-
+/// Show the image at `url`, `width` pixels wide. Late results for recycled widgets are ignored.
 pub fn set_url<T: ArtTarget>(target: &T, url: Option<&str>, width: u32) {
     let k = url.filter(|u| !u.is_empty()).map(|u| format!("{width}|{u}")).unwrap_or_default();
     if wanted(target) == k && (k.is_empty() || target.has_texture()) {
@@ -229,8 +310,8 @@ pub async fn dominant_color(thumbs: &[Thumbnail]) -> Option<gdk::RGBA> {
     if let Some(c) = CACHE.with(|c| c.borrow().colors.get(&url).cloned()) {
         return c;
     }
-    let pixbuf = fetch(url.clone(), 32).await;
-    let color = pixbuf.as_ref().and_then(average_color);
+    let pixbuf = fetch(url.clone(), 32, None).await;
+    let color = pixbuf.as_ref().and_then(|(p, _)| average_color(p));
     CACHE.with(|c| {
         let mut c = c.borrow_mut();
         if c.colors.len() > 256 {
