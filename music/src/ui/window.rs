@@ -423,6 +423,12 @@ impl Window {
         if let Some(np) = imp.now_playing.borrow().as_ref() {
             np.set_narrow(narrow);
         }
+        // A phone has no volume slider, so leave the volume to the system's keys.
+        if narrow {
+            let p = Playback::get().player();
+            p.set_volume(1.0);
+            p.set_muted(false);
+        }
         // The sheet covers the whole window on a phone, only the pages on a desktop.
         if let Some(sheet) = imp.sheet.borrow().as_ref() {
             if let Some(parent) = sheet.parent()
