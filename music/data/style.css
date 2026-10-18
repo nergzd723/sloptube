@@ -342,7 +342,7 @@ menubutton.header-action > button:hover {
   background: mix(@window_bg_color, @window_fg_color, 0.09);
 }
 .mini-row {
-  padding: 8px 8px 8px 10px;
+  padding: 6px 8px 6px 8px;
 }
 .bar-title {
   font-weight: 600;

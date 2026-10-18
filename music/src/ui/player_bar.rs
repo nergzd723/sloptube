@@ -8,6 +8,8 @@ use adw::prelude::*;
 use adw::subclass::prelude::*;
 use gtk::glib;
 
+use common::sheet::MINI_ART_HEIGHT;
+
 use super::actions;
 use super::art::ArtView;
 use super::now_playing::{cycle_repeat, repeat_icon, repeat_tooltip};
@@ -141,10 +143,11 @@ impl PlayerBar {
         self.set_vexpand(false);
 
         // Mini player.
-        let art = ArtView::new(44, 44, 4.0);
+        // As tall as SlopTube's video thumbnail, so both mini players match.
+        let art = ArtView::new(MINI_ART_HEIGHT, MINI_ART_HEIGHT, 4.0);
         art.set_eager(true);
         art.set_valign(gtk::Align::Center);
-        imp.mini_row.set_spacing(12);
+        imp.mini_row.set_spacing(10);
         imp.mini_row.add_css_class("mini-row");
         imp.mini_row.append(&art);
         imp.mini_row.append(&texts(&imp.mini_title, &imp.mini_artist));

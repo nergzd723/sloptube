@@ -6,9 +6,14 @@ use adw::prelude::*;
 use gtk::subclass::prelude::*;
 use gtk::glib;
 
+use common::sheet::MINI_ART_HEIGHT;
+
 use crate::image;
 use crate::playback::Playback;
 use crate::player::PlayState;
+
+/// 16:9 at the shared mini player height.
+const THUMB_WIDTH: i32 = MINI_ART_HEIGHT * 16 / 9;
 
 mod imp {
     use super::*;
@@ -83,7 +88,7 @@ impl MiniPlayer {
         overlay.add_overlay(&imp.video);
         // Fixed 96×54: the video's own pixel size must not inflate the bar.
         let thumb = crate::ui::aspect::AspectBin::new(&overlay, 16.0 / 9.0);
-        thumb.set_size_request(96, -1);
+        thumb.set_size_request(THUMB_WIDTH, -1);
         thumb.set_valign(gtk::Align::Center);
         thumb.set_overflow(gtk::Overflow::Hidden);
         thumb.add_css_class("mini-thumb");
@@ -98,7 +103,7 @@ impl MiniPlayer {
         imp.subtitle.set_xalign(0.0);
         imp.subtitle.set_ellipsize(gtk::pango::EllipsizeMode::End);
         imp.subtitle.add_css_class("dim-label");
-        imp.subtitle.add_css_class("caption");
+        imp.subtitle.add_css_class("mini-subtitle");
         text.append(&imp.title);
         text.append(&imp.subtitle);
         row.append(&text);
@@ -155,7 +160,7 @@ impl MiniPlayer {
         playback.connect_thumbnail_notify(glib::clone!(
             #[weak(rename_to = mini)]
             self,
-            move |pb| image::set_picture(&mini.imp().poster, Some(&pb.thumbnail()), 96 * mini.scale_factor().max(1) as u32)
+            move |pb| image::set_picture(&mini.imp().poster, Some(&pb.thumbnail()), THUMB_WIDTH as u32 * mini.scale_factor().max(1) as u32)
         ));
         playback.connect_audio_only_notify(glib::clone!(
             #[weak(rename_to = mini)]

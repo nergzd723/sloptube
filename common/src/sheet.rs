@@ -19,6 +19,9 @@ use gtk::{gdk, glib, graphene, gsk};
 /// How far (px) the mini player must be dragged up before letting go opens it.
 const MIN_EXPAND_DRAG: f64 = 64.0;
 
+/// Height of the mini player's thumbnail in both apps, so the two bars match.
+pub const MINI_ART_HEIGHT: i32 = 54;
+
 type Rect = (f32, f32, f32, f32);
 
 fn lerp(a: f32, b: f32, t: f32) -> f32 {
@@ -169,7 +172,8 @@ mod imp {
                 Some(r) if r.width() > 1.0 => (r.x(), r.y(), r.width(), r.height()),
                 _ => {
                     let aspect = self.hero.borrow().as_ref().map_or(16.0 / 9.0, |h| h.aspect);
-                    (8.0, (height - 64) as f32, (54.0 * aspect).min(width as f32), 54.0)
+                    let h = MINI_ART_HEIGHT as f32;
+                    (8.0, height as f32 - h - 10.0, (h * aspect).min(width as f32), h)
                 }
             }
         }
