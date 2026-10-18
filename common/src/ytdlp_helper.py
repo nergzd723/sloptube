@@ -6,6 +6,7 @@ after the first noticeably faster than spawning the CLI. Requests with
 "audio_only" (Music's) get only the audio formats back, without captions or
 DASH ranges.
 """
+import hashlib
 import json
 import sys
 import threading
@@ -123,22 +124,89 @@ def _captions(tracks, keep=None):
     return out
 
 
-def extract(req):
-    opts = {
-        "quiet": True,
-        "no_warnings": True,
-        "skip_download": True,
-        "noprogress": True,
-        "noplaylist": True,
-        "logger": _QuietLogger(),
-    }
-    if req.get("cookiefile"):
-        opts["cookiefile"] = req["cookiefile"]
+# YoutubeDL instances are reused: each keeps the player JS, ytcfg and other
+# caches, which saves about a second per extraction (more when signed in). One
+# instance serves one request at a time; idle ones wait here, keyed by their
+# options and the contents of the cookie file (the app rewrites it before every
+# extraction, and yt-dlp only reads it when created).
+_pool_lock = threading.Lock()
+_pool = {}
+_POOL_KEYS = 4
+
+
+def _cookie_digest(path):
+    try:
+        with open(path, "rb") as f:
+            return hashlib.sha1(f.read()).hexdigest()
+    except OSError:
+        return None
+
+
+def _checkout(cookiefile, clients):
+    key = (cookiefile, cookiefile and _cookie_digest(cookiefile), clients)
+    with _pool_lock:
+        idle = _pool.pop(key, [])
+        ydl = idle.pop() if idle else None
+        _pool[key] = idle  # (re)inserted last: the most recently used key
+        while len(_pool) > _POOL_KEYS:
+            del _pool[next(iter(_pool))]
+    if ydl is None:
+        opts = {
+            "quiet": True,
+            "no_warnings": True,
+            "skip_download": True,
+            "noprogress": True,
+            "noplaylist": True,
+            "logger": _QuietLogger(),
+        }
+        if cookiefile:
+            opts["cookiefile"] = cookiefile
+        if clients:
+            opts["extractor_args"] = {"youtube": {"player_client": list(clients)}}
+        ydl = yt_dlp.YoutubeDL(opts)
+    return key, ydl
+
+
+def _checkin(key, ydl):
+    with _pool_lock:
+        if key in _pool:
+            _pool[key].append(ydl)
+
+
+def _extract_info(url, cookiefile, clients):
+    key, ydl = _checkout(cookiefile, clients)
     _capture.ranges = {}
     _capture.tracking = None
-    with yt_dlp.YoutubeDL(opts) as ydl:
-        info = ydl.extract_info(req["url"], download=False)
+    info = ydl.extract_info(url, download=False)
+    _checkin(key, ydl)
+    return info
+
+
+# Signed out, yt-dlp asks its "web" client too, but YouTube only offers SABR
+# streams there (which yt-dlp skips), and solving its JavaScript challenge
+# costs most of a second per video. Video requests skip it, falling back to
+# yt-dlp's defaults when that finds nothing playable.
+_SIGNED_OUT_CLIENTS = ("default", "-web")
+
+
+def _playable(info):
+    return any(f.get("url") for f in info.get("formats") or [])
+
+
+def extract(req):
+    url, cookiefile = req["url"], req.get("cookiefile") or None
     audio_only = bool(req.get("audio_only"))
+    info = None
+    if not cookiefile and not audio_only:
+        try:
+            info = _extract_info(url, None, _SIGNED_OUT_CLIENTS)
+        except yt_dlp.utils.DownloadError as exc:
+            if _is_network_error(exc):
+                raise
+        if info is not None and not _playable(info):
+            info = None
+    if info is None:
+        info = _extract_info(url, cookiefile, None)
     raw_ranges = {} if audio_only else getattr(_capture, "ranges", None) or {}
     ranges = {}
     formats = []
