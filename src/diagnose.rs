@@ -50,6 +50,14 @@ fn snapshot_png(win: &Window, paintable: &gtk::gdk::Paintable, dir: &std::path::
     if let Ok(t) = image.downcast::<gtk::gdk::Texture>() {
         let _ = t.save_to_png(dir.join("diagnose-download.png"));
     }
+    // 3) The window's render nodes, to see what wraps the video's subsurface
+    //    node (a clip, opacity or transform there stops graphics offload).
+    let window = gtk::WidgetPaintable::new(Some(win));
+    let snapshot = gtk::Snapshot::new();
+    window.snapshot(&snapshot, win.width() as f64, win.height() as f64);
+    if let Some(node) = snapshot.to_node() {
+        std::fs::write(dir.join("diagnose-window.node"), node.serialize())?;
+    }
     Ok(())
 }
 
