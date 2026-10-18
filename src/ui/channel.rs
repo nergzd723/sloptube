@@ -9,6 +9,7 @@ use gtk::glib;
 
 use super::aspect::AspectBin;
 use super::card::CardStyle;
+use super::collapse::CollapsingHeader;
 use super::feed::FeedView;
 use crate::api::{self, ChannelPage as Data, FeedPage};
 use crate::image;
@@ -22,7 +23,7 @@ mod imp {
         pub id: RefCell<String>,
         pub data: RefCell<Option<Data>>,
         pub stack: gtk::Stack,
-        pub header_revealer: gtk::Revealer,
+        pub collapse: RefCell<Option<CollapsingHeader>>,
         pub tab_stack: gtk::Stack,
         pub tabs_box: gtk::Box,
         pub subscribe: gtk::Button,
@@ -176,14 +177,12 @@ impl ChannelPage {
         ));
         row.append(&imp.subscribe);
         hbox.append(&row);
-        imp.header_revealer.set_child(Some(&hbox));
-        imp.header_revealer.set_reveal_child(true);
-        imp.header_revealer.set_transition_type(gtk::RevealerTransitionType::SlideDown);
 
         // Tabs
         imp.tabs_box.add_css_class("channel-tabs");
         imp.tab_stack.set_transition_type(gtk::StackTransitionType::Crossfade);
         let mut first_button: Option<gtk::ToggleButton> = None;
+        let mut first_feed: Option<FeedView> = None;
         let initial = Rc::new(RefCell::new(Some(d.content.clone())));
         let tabs = if d.tabs.is_empty() {
             vec![api::ChannelTab {
@@ -229,16 +228,6 @@ impl ChannelPage {
                 })
             }));
             feed.set_empty_state("view-grid-symbolic", "This channel has nothing here");
-            let reveal = imp.header_revealer.downgrade();
-            feed.vadjustment().connect_value_changed(move |adj| {
-                if let Some(r) = reveal.upgrade() {
-                    if adj.value() > 160.0 && r.reveals_child() {
-                        r.set_reveal_child(false);
-                    } else if adj.value() < 4.0 && !r.reveals_child() {
-                        r.set_reveal_child(true);
-                    }
-                }
-            });
             imp.tab_stack.add_named(&feed, Some(&tab.title));
 
             let b = gtk::ToggleButton::with_label(&tab.title);
@@ -259,6 +248,9 @@ impl ChannelPage {
                 move |b| {
                     if b.is_active() {
                         page.imp().tab_stack.set_visible_child_name(&title);
+                        if let Some(c) = page.imp().collapse.borrow().as_ref() {
+                            c.set_adjustment(Some(&feed.vadjustment()));
+                        }
                         feed.ensure_loaded();
                     }
                 }
@@ -266,6 +258,7 @@ impl ChannelPage {
             imp.tabs_box.append(&b);
             if i == 0 {
                 feed.ensure_loaded();
+                first_feed = Some(feed.clone());
             }
         }
         let tabs_scroll = gtk::ScrolledWindow::builder()
@@ -274,10 +267,9 @@ impl ChannelPage {
             .vscrollbar_policy(gtk::PolicyType::Never)
             .build();
 
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        content.append(&imp.header_revealer);
-        content.append(&tabs_scroll);
-        content.append(&imp.tab_stack);
+        let content = CollapsingHeader::new(&hbox, Some(tabs_scroll.upcast_ref()), &imp.tab_stack, 160.0);
+        content.set_adjustment(first_feed.map(|f| f.vadjustment()).as_ref());
+        imp.collapse.replace(Some(content.clone()));
         imp.stack.add_named(&content, Some("content"));
         imp.stack.set_visible_child_name("content");
         imp.data.replace(Some(d));

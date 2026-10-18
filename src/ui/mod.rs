@@ -3,6 +3,7 @@
 pub mod aspect;
 pub mod card;
 pub mod channel;
+pub mod collapse;
 pub mod comments;
 pub mod downloads;
 pub mod explore;

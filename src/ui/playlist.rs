@@ -8,6 +8,7 @@ use adw::subclass::prelude::*;
 use gtk::glib;
 
 use super::card::CardStyle;
+use super::collapse::CollapsingHeader;
 use super::feed::FeedView;
 use super::{Nav, navigate};
 use crate::api::{self, FeedPage, Item, PlaylistPage as Data};
@@ -22,7 +23,6 @@ mod imp {
         pub id: RefCell<String>,
         pub data: RefCell<Option<Data>>,
         pub stack: gtk::Stack,
-        pub header_revealer: gtk::Revealer,
         pub status: adw::StatusPage,
         pub feed: RefCell<Option<FeedView>>,
     }
@@ -197,8 +197,6 @@ impl PlaylistPage {
         buttons.append(&shuffle);
         info.append(&buttons);
         header.append(&info);
-        imp.header_revealer.set_child(Some(&header));
-        imp.header_revealer.set_reveal_child(true);
 
         let feed = FeedView::new(CardStyle::COMPACT);
         feed.set_empty_state("view-list-symbolic", "This playlist is empty");
@@ -224,20 +222,9 @@ impl PlaylistPage {
                 Ok(page)
             })
         }));
-        let reveal = imp.header_revealer.downgrade();
-        feed.vadjustment().connect_value_changed(move |adj| {
-            if let Some(r) = reveal.upgrade() {
-                if adj.value() > 120.0 && r.reveals_child() {
-                    r.set_reveal_child(false);
-                } else if adj.value() < 4.0 && !r.reveals_child() {
-                    r.set_reveal_child(true);
-                }
-            }
-        });
         feed.ensure_loaded();
-        let content = gtk::Box::new(gtk::Orientation::Vertical, 0);
-        content.append(&imp.header_revealer);
-        content.append(&feed);
+        let content = CollapsingHeader::new(&header, None, &feed, 120.0);
+        content.set_adjustment(Some(&feed.vadjustment()));
         imp.stack.add_named(&content, Some("content"));
         imp.stack.set_visible_child_name("content");
         imp.feed.replace(Some(feed));
