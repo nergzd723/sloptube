@@ -267,10 +267,16 @@ impl Window {
             let mini = mini_weak.upgrade()?;
             sheet::bounds_in(&mini.thumb()?, sheet)
         });
+        let split = shell.split().clone();
         sheet.connect_progress_notify(glib::clone!(
             #[weak]
             mini,
-            move |s| mini.set_opacity((1.0 - s.progress() / 0.35).clamp(0.0, 1.0))
+            move |s| {
+                mini.set_opacity((1.0 - s.progress() / 0.35).clamp(0.0, 1.0));
+                // Fully covered by the player: keep the browse pages out of the
+                // render tree, which GTK otherwise walks on every video frame.
+                split.set_child_visible(s.progress() < 1.0);
+            }
         ));
         sheet.connect_settled(glib::clone!(
             #[weak(rename_to = win)]
