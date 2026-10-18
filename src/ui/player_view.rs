@@ -50,6 +50,8 @@ mod imp {
         pub seek_source: RefCell<Option<glib::SourceId>>,
         pub user_seeking: Cell<bool>,
         pub last_preview_seek: Cell<Option<Instant>>,
+        /// Where the last exact seek of the current slider gesture went.
+        pub exact_seek: Cell<Option<f64>>,
         pub fullscreen: Cell<bool>,
         pub pointer_over_controls: Cell<bool>,
         pub last_motion: Cell<(f64, f64)>,
@@ -735,7 +737,9 @@ impl PlayerView {
 
     fn user_seek(&self, value: f64) {
         let imp = self.imp();
-        imp.user_seeking.set(true);
+        // The first seek of a gesture is exact, so a tap needs no other; while
+        // dragging, quicker keyframe seeks follow, and an exact one at the end.
+        let first = !imp.user_seeking.replace(true);
         let player = self.playback().player();
         let now = Instant::now();
         let due = imp
@@ -744,7 +748,8 @@ impl PlayerView {
             .is_none_or(|t| now.duration_since(t) > Duration::from_millis(150));
         if due {
             imp.last_preview_seek.set(Some(now));
-            player.seek(value, false);
+            player.seek(value, first);
+            imp.exact_seek.set(first.then_some(value));
         }
         self.update_time();
         if let Some(s) = imp.seek_source.take() {
@@ -759,7 +764,9 @@ impl PlayerView {
                     let imp = view.imp();
                     imp.seek_source.take();
                     let v = imp.scale.value();
-                    view.playback().player().seek(v, true);
+                    if imp.exact_seek.take() != Some(v) {
+                        view.playback().player().seek(v, true);
+                    }
                     imp.user_seeking.set(false);
                     imp.last_preview_seek.set(None);
                 }

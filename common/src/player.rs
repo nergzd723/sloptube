@@ -71,7 +71,21 @@ pub struct LoadRequest {
     pub source: Source,
     pub headers: Vec<(String, String)>,
     pub start: Option<f64>,
+    /// Start on the keyframe at or before `start` rather than exactly on it,
+    /// which saves decoding up to a few seconds of video (resuming).
+    pub start_at_keyframe: bool,
     pub autoplay: bool,
+}
+
+/// Where a seek lands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SeekMode {
+    /// Exactly on the position (decodes from the keyframe before it).
+    Accurate,
+    /// On the keyframe nearest to the position.
+    Keyframe,
+    /// On the keyframe at or before the position.
+    KeyframeBefore,
 }
 
 /// A stream prepared for a gapless switch.
@@ -144,7 +158,7 @@ mod imp {
         /// The current load went straight to PLAYING (nothing to seek to first).
         pub direct: Cell<bool>,
         pub seeking: Cell<bool>,
-        pub pending_seek: Cell<Option<f64>>,
+        pub pending_seek: Cell<Option<(f64, SeekMode)>>,
         /// Generation of the current load; bus messages from older loads are ignored.
         pub load_gen: Cell<u64>,
         pub accepting: Cell<bool>,
@@ -453,7 +467,7 @@ mod imp {
             }
             self.rate.set(r);
             if self.prerolled.get() && !self.is_live.get() {
-                self.do_seek(self.position.get(), true);
+                self.do_seek(self.position.get(), SeekMode::Accurate);
             }
         }
 
@@ -514,18 +528,18 @@ mod imp {
             }
         }
 
-        pub fn do_seek(&self, pos: f64, accurate: bool) {
+        pub fn do_seek(&self, pos: f64, mode: SeekMode) {
             let Some(p) = self.playbin() else { return };
             if !self.prerolled.get() {
-                self.pending_seek.set(Some(pos));
+                self.pending_seek.set(Some((pos, mode)));
                 return;
             }
-            let mut flags = gst::SeekFlags::FLUSH;
-            flags |= if accurate {
-                gst::SeekFlags::ACCURATE
-            } else {
-                gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST
-            };
+            let flags = gst::SeekFlags::FLUSH
+                | match mode {
+                    SeekMode::Accurate => gst::SeekFlags::ACCURATE,
+                    SeekMode::Keyframe => gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_NEAREST,
+                    SeekMode::KeyframeBefore => gst::SeekFlags::KEY_UNIT | gst::SeekFlags::SNAP_BEFORE,
+                };
             let pos = pos.max(0.0);
             let target = gst::ClockTime::from_nseconds((pos * 1e9) as u64);
             let rate = self.rate.get();
@@ -685,8 +699,8 @@ mod imp {
                     self.seeking.set(false);
                     self.update_duration();
                     self.update_video_size();
-                    if let Some(pos) = self.pending_seek.take() {
-                        self.do_seek(pos, true);
+                    if let Some((pos, mode)) = self.pending_seek.take() {
+                        self.do_seek(pos, mode);
                         return;
                     }
                     if !first {
@@ -817,7 +831,8 @@ impl Player {
         imp.seeking.set(false);
         imp.is_buffering.set(false);
         imp.target_playing.set(req.autoplay);
-        imp.pending_seek.set(req.start.filter(|s| *s > 1.0));
+        let start_mode = if req.start_at_keyframe { SeekMode::KeyframeBefore } else { SeekMode::Accurate };
+        imp.pending_seek.set(req.start.filter(|s| *s > 1.0).map(|s| (s, start_mode)));
         imp.position.set(req.start.unwrap_or(0.0));
         imp.duration.set(0.0);
         imp.buffering.set(100);
@@ -901,7 +916,7 @@ impl Player {
         let imp = self.imp();
         if imp.state.get() == PlayState::Ended {
             imp.target_playing.set(true);
-            imp.do_seek(0.0, true);
+            imp.do_seek(0.0, SeekMode::Accurate);
             return;
         }
         if matches!(imp.state.get(), PlayState::Idle | PlayState::Error) {
@@ -981,7 +996,7 @@ impl Player {
     pub fn seek(&self, pos: f64, accurate: bool) {
         let d = self.duration();
         let pos = if d > 0.0 { pos.clamp(0.0, (d - 0.5).max(0.0)) } else { pos.max(0.0) };
-        self.imp().do_seek(pos, accurate);
+        self.imp().do_seek(pos, if accurate { SeekMode::Accurate } else { SeekMode::Keyframe });
     }
 
     pub fn seek_relative(&self, delta: f64) {

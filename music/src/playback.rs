@@ -910,6 +910,7 @@ impl Playback {
                         source: Source::Single { uri: f.url.clone() },
                         headers: f.headers(),
                         start,
+                        start_at_keyframe: false,
                         autoplay,
                     });
                     if !autoplay {

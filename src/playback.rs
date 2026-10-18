@@ -378,13 +378,15 @@ impl Playback {
         self.emit_by_name::<()>("video-changed", &[]);
 
         self.load_details(playlist);
+        // A saved position doesn't need to be exact; a link's timestamp does.
+        let resume = start.is_none();
         let start = start.or_else(|| {
             settings::get()
                 .resume_playback
                 .then(|| saved_position(&item.id))
                 .flatten()
         });
-        self.load_streams(start, true);
+        self.load_streams(start, resume, true);
     }
 
     /// Play a downloaded file.
@@ -420,6 +422,7 @@ impl Playback {
             source: Source::Single { uri },
             headers: Vec::new(),
             start,
+            start_at_keyframe: true,
             autoplay: true,
         });
         self.emit_by_name::<()>("streams-loaded", &[]);
@@ -505,7 +508,7 @@ impl Playback {
         auth::write_cookie_file(&session, "video").ok()
     }
 
-    fn load_streams(&self, start: Option<f64>, autoplay: bool) {
+    fn load_streams(&self, start: Option<f64>, start_at_keyframe: bool, autoplay: bool) {
         let imp = self.imp();
         let Some(item) = imp.item.borrow().clone() else { return };
         let ticket = imp.generation.get();
@@ -525,7 +528,7 @@ impl Playback {
             match res {
                 Ok(info) => {
                     this.imp().info.replace(Some(info.clone()));
-                    this.start_playback(start, autoplay);
+                    this.start_playback(start, start_at_keyframe, autoplay);
                     this.setup_tracking(&info);
                 }
                 Err(e) => {
@@ -540,7 +543,7 @@ impl Playback {
         });
     }
 
-    fn start_playback(&self, start: Option<f64>, autoplay: bool) {
+    fn start_playback(&self, start: Option<f64>, start_at_keyframe: bool, autoplay: bool) {
         let imp = self.imp();
         let Some(info) = self.stream_info() else { return };
         let sel = match formats::select(&info, &self.support(), &self.prefs(), imp.quality.get()) {
@@ -597,6 +600,7 @@ impl Playback {
             source,
             headers,
             start,
+            start_at_keyframe,
             autoplay,
         });
         self.emit_by_name::<()>("streams-loaded", &[]);
@@ -611,7 +615,7 @@ impl Playback {
         }
         let pos = imp.player.position();
         let playing = imp.player.is_playing_intent();
-        self.start_playback(Some(pos), playing);
+        self.start_playback(Some(pos), false, playing);
     }
 
     pub fn set_audio_only(&self, audio_only: bool) {
@@ -624,7 +628,7 @@ impl Playback {
         if imp.local_file.borrow().is_none() && self.stream_info().is_some() {
             let pos = imp.player.position();
             let playing = imp.player.is_playing_intent();
-            self.start_playback(Some(pos), playing);
+            self.start_playback(Some(pos), false, playing);
         }
     }
 
@@ -641,6 +645,7 @@ impl Playback {
                 source: Source::Single { uri },
                 headers: Vec::new(),
                 start: Some(pos),
+                start_at_keyframe: false,
                 autoplay: true,
             });
             return;
@@ -651,7 +656,7 @@ impl Playback {
             let playlist = imp.queue.borrow().as_ref().map(|q| q.playlist_id.clone());
             self.load_details(playlist);
         }
-        self.load_streams(Some(pos), true);
+        self.load_streams(Some(pos), false, true);
     }
 
     /// Play/pause; after a failure, tries loading again instead.

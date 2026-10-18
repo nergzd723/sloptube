@@ -234,6 +234,15 @@ browses: `warm_up_soon`) and exits after five idle minutes
   `live_status`, `formats` (selected keys only), `chapters`, `captions`,
   `tracking` and `ranges`. Music's requests are `audio_only`: just the audio
   formats, without captions or ranges.
+- `YoutubeDL` instances are reused: idle ones wait in a small pool keyed by
+  their options and the cookie file's contents. Each keeps the player JS, ytcfg
+  and similar caches, which saves about a second per extraction.
+- Signed out, video requests leave out yt-dlp's `web` client
+  (`player_client=default,-web`): YouTube only offers SABR streams there, which
+  yt-dlp skips, and solving its JavaScript challenge (deno) costs most of a
+  second. If that finds nothing playable, the helper asks again with yt-dlp's
+  defaults. Signed in, the defaults are used as they are, because the
+  history-tracking URLs come from the first player response.
 
 `tracking` and `ranges` are not something yt-dlp provides. The helper wraps
 `YoutubeIE._extract_formats_and_subtitles` to read them from the raw player
@@ -340,9 +349,19 @@ generation, and goes to `PAUSED` (audio with nothing to seek to goes straight
 to `PLAYING`). The bus handler ignores every message until it
 sees the marker of the current generation, so errors and state changes left
 over from the previous video can't affect the new one. The start position is
-applied once the pipeline has prerolled. `NoPreroll` means a live stream.
+applied once the pipeline has prerolled: exactly, or (`start_at_keyframe`, for
+saved resume positions) on the keyframe before it, which skips decoding up to
+a GOP of video (about 0.3 s for YouTube's AV1 on Iris). `NoPreroll` means a
+live stream.
 
-**Seeking.** Seeks are flushing seeks on the control thread. Qualcomm's Iris
+**Seeking.** Seeks are flushing seeks on the control thread. An exact seek
+decodes from the previous keyframe, about 70 ms per second of video on Iris;
+a keyframe seek doesn't. A flushing seek also throws away what was buffered,
+so every seek fetches again (0.1–0.3 s, or about 0.8 s when it cancels a
+download in flight and needs a new connection). The seek bar seeks exactly on
+the first change of a gesture, so a tap is one seek; while dragging it sends
+keyframe seeks at most every 150 ms and an exact one 280 ms after the last
+change. Qualcomm's Iris
 V4L2 decoder (and maybe other V4L2 stateful decoders) stops producing VP9 and
 AV1 frames after a flush. For decoders named `v4l2*` but not `v4l2sl*`,
 `seek_with_decoder_reset` therefore closes and reopens the decoder around the
