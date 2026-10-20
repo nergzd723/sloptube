@@ -31,15 +31,6 @@ fn main() -> glib::ExitCode {
             unsafe { std::env::remove_var("GTK_THEME") };
         }
     }
-    // GTK 4.24 only tells the compositor a texture's colour state with colour
-    // management on, which is still opt-in. Without it, BT.709 video frames are
-    // never offloaded to a subsurface: GTK composites every frame itself.
-    let gdk_debug = std::env::var("GDK_DEBUG").unwrap_or_default();
-    if !gdk_debug.split([',', ':', ' ']).any(|f| f == "color-mgmt") {
-        let value = if gdk_debug.is_empty() { "color-mgmt".to_owned() } else { format!("{gdk_debug},color-mgmt") };
-        // SAFETY: no other threads have been started yet.
-        unsafe { std::env::set_var("GDK_DEBUG", value) };
-    }
     if let Err(e) = gst::init() {
         eprintln!("GStreamer failed to initialise: {e}");
         return glib::ExitCode::FAILURE;

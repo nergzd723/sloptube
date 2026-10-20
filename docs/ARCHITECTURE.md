@@ -494,7 +494,10 @@ the frame may shrink below 16:9 (letterboxing) so the details stay reachable.
 
 `PlayerView` (`player_view.rs`) shows the sink's paintable in a `GtkPicture`
 inside a `GtkGraphicsOffload`, so the compositor can scan DMABuf frames out
-directly. On top are the auto-hiding controls and a settings popover with
+directly. GTK 4.24 only offloads YUV frames in its default colour state unless
+colour management is on (`GDK_DEBUG=color-mgmt`, which is expensive under
+mutter), so the player labels SDR video with that state before the sink sees
+it (`relabel_for_offload` in `common/src/player.rs`). On top are the auto-hiding controls and a settings popover with
 quality, speed, audio only and *Stats for nerds*. A tap or click is acted on
 only when it is released, so the start of a drag never toggles the controls.
 

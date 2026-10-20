@@ -300,6 +300,18 @@ mod imp {
                         }
                         gst::PadProbeReturn::Ok
                     });
+                    if !gtk_manages_colour() {
+                        pad.add_probe(gst::PadProbeType::EVENT_DOWNSTREAM, |_, info| {
+                            let relabelled = match info.event().map(|e| e.view()) {
+                                Some(gst::EventView::Caps(c)) => relabel_for_offload(c.caps()),
+                                _ => None,
+                            };
+                            if let Some(caps) = relabelled {
+                                info.data = Some(gst::PadProbeData::Event(gst::event::Caps::new(&caps)));
+                            }
+                            gst::PadProbeReturn::Ok
+                        });
+                    }
                 }
                 playbin.set_property("video-sink", &sink);
                 // Only what we need: no subtitle rendering, no software colour balance or
@@ -733,6 +745,41 @@ mod imp {
     }
 }
 
+/// Whether GTK colour-manages its windows. GTK 4.24 keeps that behind
+/// `GDK_DEBUG=color-mgmt`, and it is costly to turn on: mutter asks for gamma
+/// 2.2, which GTK renders through a PQ offscreen plus a conversion pass on every
+/// frame, halving the scrolling frame rate on a Mali tablet.
+fn gtk_manages_colour() -> bool {
+    std::env::var("GDK_DEBUG").is_ok_and(|v| v.split([',', ':', ';', ' ', '\t']).any(|f| f == "color-mgmt"))
+}
+
+/// Without colour management GTK only hands a YUV frame to the compositor if
+/// it is in GTK's default YUV colour state (BT.709 primaries, sRGB transfer,
+/// BT.601 matrix, narrow range), which is also what compositors assume for
+/// unlabelled YUV buffers. Label SDR video that way so it is offloaded; for
+/// BT.709 video that means a slight hue shift in saturated colours. Frames GTK
+/// composites itself carry the same label, so both paths look alike. HDR and
+/// wide-gamut video keep their colorimetry.
+fn relabel_for_offload(caps: &gst::CapsRef) -> Option<gst::Caps> {
+    use gst_video::{
+        VideoColorMatrix as M, VideoColorPrimaries as P, VideoColorRange as R, VideoColorimetry,
+        VideoTransferFunction as T,
+    };
+    let from: VideoColorimetry = caps.structure(0)?.get::<&str>("colorimetry").ok()?.parse().ok()?;
+    let sdr_yuv = matches!(from.range(), R::Range16_235 | R::Unknown)
+        && matches!(from.matrix(), M::Bt709 | M::Bt601)
+        && matches!(from.transfer(), T::Bt709 | T::Bt601 | T::Bt202010 | T::Bt202012 | T::Srgb | T::Unknown)
+        && matches!(from.primaries(), P::Bt709 | P::Smpte170m | P::Bt470bg | P::Unknown);
+    let to = VideoColorimetry::new(R::Range16_235, M::Bt601, T::Srgb, P::Bt709);
+    if !sdr_yuv || from == to {
+        return None;
+    }
+    log::debug!("labelling {from} video as {to} so the compositor can show it");
+    let mut caps = caps.to_owned();
+    caps.make_mut().set("colorimetry", to.to_string());
+    Some(caps)
+}
+
 /// V4L2 stateful decoders (Qualcomm Iris/Venus, ...) can stop producing frames
 /// after a flush. Re-opening the device around seeks avoids it; stateless
 /// (v4l2sl*), VA-API and software decoders don't need this.
@@ -1087,4 +1134,36 @@ pub fn headers_from_map(map: &HashMap<String, String>) -> Vec<(String, String)> 
         })
         .map(|(k, v)| (k.clone(), v.clone()))
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn colorimetry_after(caps: &str) -> Option<String> {
+        gst::init().unwrap();
+        let caps: gst::Caps = caps.parse().unwrap();
+        relabel_for_offload(&caps).map(|c| c.structure(0).unwrap().get::<String>("colorimetry").unwrap())
+    }
+
+    #[test]
+    fn labels_sdr_video_with_gtks_default_yuv_state() {
+        let dmabuf = "video/x-raw(memory:DMABuf),format=DMA_DRM,drm-format=NV12,width=1920,height=1080,colorimetry=bt709";
+        let relabelled: gst_video::VideoColorimetry = colorimetry_after(dmabuf).unwrap().parse().unwrap();
+        // GTK's default YUV state is CICP 1/13/5 narrow; it treats matrix 6 as 5.
+        assert_eq!(relabelled.primaries().to_iso(), 1);
+        assert_eq!(relabelled.transfer().to_iso(), 13);
+        assert_eq!(relabelled.matrix().to_iso(), 6);
+        assert_eq!(relabelled.range(), gst_video::VideoColorRange::Range16_235);
+        assert!(colorimetry_after("video/x-raw,format=NV12,colorimetry=bt601").is_some());
+    }
+
+    #[test]
+    fn leaves_hdr_full_range_and_rgb_alone() {
+        assert_eq!(colorimetry_after("video/x-raw,format=P010_10LE,colorimetry=bt2100-pq"), None);
+        assert_eq!(colorimetry_after("video/x-raw,format=NV12,colorimetry=bt2020"), None);
+        assert_eq!(colorimetry_after("video/x-raw,format=NV12,colorimetry=1:3:5:1"), None);
+        assert_eq!(colorimetry_after("video/x-raw,format=BGRA,colorimetry=sRGB"), None);
+        assert_eq!(colorimetry_after("video/x-raw,format=NV12"), None);
+    }
 }
